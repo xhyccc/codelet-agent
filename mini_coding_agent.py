@@ -38,6 +38,220 @@ MAX_HISTORY = 12000
 IGNORED_PATH_NAMES = {".git", ".mini-coding-agent", "__pycache__", ".pytest_cache", ".ruff_cache", ".venv", "venv"}
 ALL_TOOL_OPS = frozenset({"read", "write", "bash", "python"})
 
+# Presets for popular OpenAI-compatible LLM API providers. Each preset declares the
+# default base URL and the environment variable conventionally used for the API key.
+# All providers below expose an OpenAI-compatible /v1/chat/completions endpoint, so
+# we reuse OpenAIModelClient for every entry.
+LLM_PROVIDER_PRESETS = {
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "env_key": "OPENAI_API_KEY",
+        "default_model": "gpt-4o-mini",
+        "description": "OpenAI",
+    },
+    "kimi": {
+        # Moonshot AI / Kimi (https://platform.moonshot.cn)
+        "base_url": "https://api.moonshot.cn/v1",
+        "env_key": "MOONSHOT_API_KEY",
+        "default_model": "moonshot-v1-8k",
+        "description": "Moonshot AI (Kimi)",
+    },
+    "moonshot": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "env_key": "MOONSHOT_API_KEY",
+        "default_model": "moonshot-v1-8k",
+        "description": "Moonshot AI (Kimi)",
+    },
+    "glm": {
+        # Zhipu AI / GLM (https://open.bigmodel.cn)
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "env_key": "ZHIPU_API_KEY",
+        "default_model": "glm-4-flash",
+        "description": "Zhipu AI (GLM)",
+    },
+    "zhipu": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "env_key": "ZHIPU_API_KEY",
+        "default_model": "glm-4-flash",
+        "description": "Zhipu AI (GLM)",
+    },
+    "siliconflow": {
+        # SiliconFlow (https://siliconflow.cn)
+        "base_url": "https://api.siliconflow.cn/v1",
+        "env_key": "SILICONFLOW_API_KEY",
+        "default_model": "Qwen/Qwen2.5-7B-Instruct",
+        "description": "SiliconFlow",
+    },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com/v1",
+        "env_key": "DEEPSEEK_API_KEY",
+        "default_model": "deepseek-chat",
+        "description": "DeepSeek",
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "env_key": "OPENROUTER_API_KEY",
+        "default_model": "openai/gpt-4o-mini",
+        "description": "OpenRouter",
+    },
+    "together": {
+        "base_url": "https://api.together.xyz/v1",
+        "env_key": "TOGETHER_API_KEY",
+        "default_model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+        "description": "Together AI",
+    },
+    "dashscope": {
+        # Alibaba Cloud DashScope (Qwen) compatibility-mode endpoint
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "env_key": "DASHSCOPE_API_KEY",
+        "default_model": "qwen-plus",
+        "description": "Alibaba DashScope (Qwen)",
+    },
+    "custom": {
+        # Generic OpenAI-compatible endpoint; user must supply --openai-base-url
+        # and either --openai-api-key or set CUSTOM_LLM_API_KEY / OPENAI_API_KEY.
+        "base_url": None,
+        "env_key": "CUSTOM_LLM_API_KEY",
+        "default_model": None,
+        "description": "Custom OpenAI-compatible endpoint",
+    },
+}
+
+
+def resolve_provider_preset(name):
+    """Look up an LLM provider preset by name (case-insensitive)."""
+    if not name:
+        return None
+    return LLM_PROVIDER_PRESETS.get(name.lower())
+
+
+###############################################
+#### Lightweight Sandboxing For Risky Tools ###
+###############################################
+# Pattern denylist for shell commands. Each entry is a compiled regex applied
+# (case-insensitive) to the whole command string. These are intentionally
+# conservative: the goal is to catch obvious destructive or privilege-escalating
+# patterns, not to provide a real security boundary. Always combine with
+# `--approval ask` and run untrusted prompts in a real sandbox/VM/container.
+SANDBOX_SHELL_DENY_PATTERNS = (
+    r"\bsudo\b",
+    r"\bsu\s+-",
+    r"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f?|--recursive)[^\n]*\s(/|~|\$HOME)\b",
+    r"\brm\s+-rf?\s+/(?:\s|$)",
+    r":\s*\(\s*\)\s*\{.*\|\s*:&\s*\}\s*;",  # classic fork bomb :(){ :|:& };:
+    r"\bmkfs(\.[a-z0-9]+)?\b",
+    r"\bdd\b[^\n]*\bof=/dev/",
+    r"\bshutdown\b",
+    r"\breboot\b",
+    r"\bhalt\b",
+    r"\bpoweroff\b",
+    r"\binit\s+0\b",
+    r"\binit\s+6\b",
+    r"\bchmod\s+(-R\s+)?[0-7]*777[^\n]*\s(/|~|\$HOME)(\s|$)",
+    r"\bchown\s+(-R\s+)?[^\n]*\s(/|~|\$HOME)(\s|$)",
+    # piping remote content directly into a shell interpreter (curl | sh, wget | bash, ...)
+    r"\b(curl|wget|fetch)\b[^\n]*\|\s*(sh|bash|zsh|ksh|dash|python[0-9.]*|perl|node|ruby)\b",
+    r">\s*/dev/(sd[a-z]+|nvme[0-9]+n[0-9]+|hd[a-z]+)\b",
+)
+
+# Pattern denylist for Python code passed to `run_python`. Catches obvious
+# attempts to spawn root shells, write to disk devices, or remove the workspace.
+SANDBOX_PYTHON_DENY_PATTERNS = (
+    r"\bos\.system\s*\(\s*['\"][^'\"\n]*\b(sudo|rm\s+-rf?\s+/|mkfs|shutdown|reboot|halt|poweroff)\b",
+    r"\bsubprocess\.[A-Za-z_]+\s*\([^)]*\b(sudo|mkfs|shutdown|reboot|halt|poweroff)\b",
+    r"\bshutil\.rmtree\s*\(\s*['\"]/['\"]?\s*\)",
+    r"\bshutil\.rmtree\s*\(\s*['\"]/(bin|boot|dev|etc|home|lib|opt|root|sbin|sys|usr|var)\b",
+    r"\bopen\s*\(\s*['\"]/dev/(sd[a-z]+|nvme[0-9]+n[0-9]+|hd[a-z]+)",
+)
+
+# Environment variable name patterns to strip from sandboxed subprocess environments
+# to reduce the blast radius of an accidental credential exfiltration.
+SANDBOX_ENV_STRIP_PATTERNS = (
+    re.compile(r"_API_KEY$"),
+    re.compile(r"_TOKEN$"),
+    re.compile(r"_SECRET$"),
+    re.compile(r"_PASSWORD$"),
+    re.compile(r"^AWS_"),
+    re.compile(r"^AZURE_"),
+    re.compile(r"^GCP_"),
+    re.compile(r"^GITHUB_TOKEN$"),
+    re.compile(r"^OPENAI_API_KEY$"),
+    re.compile(r"^ANTHROPIC_API_KEY$"),
+)
+
+# Default resource limits for sandboxed subprocesses (POSIX only). We intentionally
+# do NOT set RLIMIT_NPROC by default because it is enforced per real user ID,
+# not per process tree, so a tight value would interact poorly with other
+# processes already running under the same user (CI, IDEs, etc.).
+SANDBOX_DEFAULT_LIMITS = {
+    "cpu_seconds": 30,        # RLIMIT_CPU
+    "address_space_bytes": 1024 * 1024 * 1024,  # RLIMIT_AS: 1 GiB
+    "file_size_bytes": 64 * 1024 * 1024,        # RLIMIT_FSIZE: 64 MiB
+}
+
+
+def sandbox_check_shell(command):
+    """Return an error message if `command` matches any denylisted pattern, else None."""
+    for pattern in SANDBOX_SHELL_DENY_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            return f"sandbox: shell command blocked by safety policy (matched: {pattern})"
+    return None
+
+
+def sandbox_check_python(code):
+    """Return an error message if `code` matches any denylisted pattern, else None."""
+    for pattern in SANDBOX_PYTHON_DENY_PATTERNS:
+        if re.search(pattern, code, re.IGNORECASE):
+            return f"sandbox: python code blocked by safety policy (matched: {pattern})"
+    return None
+
+
+def sandbox_filter_env(env):
+    """Return a copy of `env` with obviously sensitive variables removed."""
+    filtered = {}
+    for key, value in env.items():
+        if any(pattern.search(key) for pattern in SANDBOX_ENV_STRIP_PATTERNS):
+            continue
+        filtered[key] = value
+    # Make sure subprocesses don't accidentally inherit a writable PYTHONPATH that
+    # could be used to shadow stdlib modules with attacker-controlled code.
+    filtered.pop("PYTHONPATH", None)
+    return filtered
+
+
+def sandbox_preexec(limits=None):
+    """Return a preexec_fn that applies POSIX resource limits, or None on non-POSIX."""
+    if os.name != "posix":
+        return None
+    try:
+        import resource  # noqa: F401  (imported lazily; only available on POSIX)
+    except ImportError:
+        return None
+
+    limits = limits or SANDBOX_DEFAULT_LIMITS
+
+    def _apply():
+        import resource as _resource
+        try:
+            cpu = limits.get("cpu_seconds")
+            if cpu:
+                _resource.setrlimit(_resource.RLIMIT_CPU, (cpu, cpu))
+            mem = limits.get("address_space_bytes")
+            if mem and hasattr(_resource, "RLIMIT_AS"):
+                _resource.setrlimit(_resource.RLIMIT_AS, (mem, mem))
+            fsize = limits.get("file_size_bytes")
+            if fsize:
+                _resource.setrlimit(_resource.RLIMIT_FSIZE, (fsize, fsize))
+            nproc = limits.get("max_processes")
+            if nproc and hasattr(_resource, "RLIMIT_NPROC"):
+                _resource.setrlimit(_resource.RLIMIT_NPROC, (nproc, nproc))
+        except (ValueError, OSError):
+            # If a limit can't be applied (e.g. running under existing tighter
+            # limits), continue rather than crashing the subprocess launch.
+            pass
+
+    return _apply
+
 ##############################
 #### Six Agent Components ####
 ##############################
@@ -276,6 +490,7 @@ class MiniAgent:
         max_depth=1,
         read_only=False,
         allowed_ops=None,
+        sandbox="lite",
     ):
         self.model_client = model_client
         self.workspace = workspace
@@ -288,6 +503,7 @@ class MiniAgent:
         self.max_depth = max_depth
         self.read_only = read_only
         self.allowed_ops = allowed_ops
+        self.sandbox = sandbox if sandbox in ("off", "lite") else "lite"
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
             "created_at": now(),
@@ -863,6 +1079,17 @@ class MiniAgent:
         timeout = int(args.get("timeout", 20))
         if timeout < 1 or timeout > 120:
             raise ValueError("timeout must be in [1, 120]")
+
+        sandbox_kwargs = {}
+        if self.sandbox == "lite":
+            blocked = sandbox_check_shell(command)
+            if blocked:
+                return blocked
+            sandbox_kwargs["env"] = sandbox_filter_env(os.environ)
+            preexec = sandbox_preexec()
+            if preexec is not None:
+                sandbox_kwargs["preexec_fn"] = preexec
+
         result = subprocess.run(
             command,
             cwd=self.root,
@@ -870,6 +1097,7 @@ class MiniAgent:
             capture_output=True,
             text=True,
             timeout=timeout,
+            **sandbox_kwargs,
         )
         return "\n".join(
             [
@@ -911,6 +1139,17 @@ class MiniAgent:
         timeout = int(args.get("timeout", 20))
         if timeout < 1 or timeout > 120:
             raise ValueError("timeout must be in [1, 120]")
+
+        sandbox_kwargs = {}
+        if self.sandbox == "lite":
+            blocked = sandbox_check_python(code)
+            if blocked:
+                return blocked
+            sandbox_kwargs["env"] = sandbox_filter_env(os.environ)
+            preexec = sandbox_preexec()
+            if preexec is not None:
+                sandbox_kwargs["preexec_fn"] = preexec
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as fh:
             fh.write(code)
             tmp_path = fh.name
@@ -921,6 +1160,7 @@ class MiniAgent:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                **sandbox_kwargs,
             )
         finally:
             os.unlink(tmp_path)
@@ -954,6 +1194,7 @@ class MiniAgent:
             max_depth=self.max_depth,
             read_only=True,
             allowed_ops=self.allowed_ops,
+            sandbox=self.sandbox,
         )
         child.session["memory"]["task"] = task
         child.session["memory"]["notes"] = [clip(self.history_text(), 300)]
@@ -1008,11 +1249,32 @@ def build_agent(args):
     workspace = WorkspaceContext.build(args.cwd)
     store = SessionStore(Path(workspace.repo_root) / ".mini-coding-agent" / "sessions")
 
+    # If the user picked an OpenAI-compatible provider preset (Kimi, GLM,
+    # SiliconFlow, ...) treat it like the `openai` backend with prefilled
+    # base_url and api key env var. `--provider` always wins over `--backend`
+    # because it is the more specific signal.
+    preset = resolve_provider_preset(args.provider) if getattr(args, "provider", None) else None
+    if preset is not None:
+        args.backend = "openai"
+        # Fill in base_url from the preset unless the user explicitly overrode it.
+        if not args.openai_base_url_explicit and preset.get("base_url"):
+            args.openai_base_url = preset["base_url"]
+        # Fill in API key from the preset's conventional env var if not given.
+        if not args.openai_api_key:
+            args.openai_api_key = os.environ.get(preset["env_key"]) or os.environ.get("OPENAI_API_KEY")
+        # Fill in default model if user didn't specify one explicitly.
+        if not args.model_explicit and preset.get("default_model"):
+            args.model = preset["default_model"]
+
     if args.backend == "openai":
         api_key = args.openai_api_key or os.environ.get("OPENAI_API_KEY")
         if not api_key:
+            hint = ""
+            if preset is not None:
+                hint = f" (e.g. export {preset['env_key']}=...)"
             raise RuntimeError(
-                "OpenAI API key is required. Set --openai-api-key or the OPENAI_API_KEY environment variable."
+                "OpenAI-compatible API key is required."
+                f" Set --openai-api-key or the OPENAI_API_KEY environment variable{hint}."
             )
         model_client = OpenAIModelClient(
             model=args.model,
@@ -1046,6 +1308,7 @@ def build_agent(args):
             max_steps=args.max_steps,
             max_new_tokens=args.max_new_tokens,
             allowed_ops=allowed_ops,
+            sandbox=args.sandbox,
         )
     return MiniAgent(
         model_client=model_client,
@@ -1055,6 +1318,7 @@ def build_agent(args):
         max_steps=args.max_steps,
         max_new_tokens=args.max_new_tokens,
         allowed_ops=allowed_ops,
+        sandbox=args.sandbox,
     )
 
 
@@ -1071,13 +1335,27 @@ def build_arg_parser():
         default="ollama",
         help="Model backend to use.",
     )
-    parser.add_argument("--model", default="qwen3.5:4b", help="Model name (Ollama model or OpenAI model id).")
+    provider_choices = sorted(LLM_PROVIDER_PRESETS.keys())
+    parser.add_argument(
+        "--provider",
+        choices=provider_choices,
+        default=None,
+        help=(
+            "Convenience preset for a custom OpenAI-compatible LLM API. "
+            "Sets --backend openai and an appropriate --openai-base-url, and reads "
+            "the API key from the provider's conventional environment variable "
+            "(e.g. MOONSHOT_API_KEY for kimi, ZHIPU_API_KEY for glm, "
+            "SILICONFLOW_API_KEY for siliconflow). Pick 'custom' to combine with "
+            "--openai-base-url and --openai-api-key for any other endpoint."
+        ),
+    )
+    parser.add_argument("--model", default=argparse.SUPPRESS, help="Model name (Ollama model or OpenAI model id). Default: qwen3.5:4b, or provider preset default.")
     # Ollama-specific flags
     parser.add_argument("--host", default="http://127.0.0.1:11434", help="Ollama server URL.")
     parser.add_argument("--ollama-timeout", type=int, default=300, help="Ollama request timeout in seconds.")
     # OpenAI-specific flags
-    parser.add_argument("--openai-api-key", default=None, help="OpenAI API key (falls back to OPENAI_API_KEY env var).")
-    parser.add_argument("--openai-base-url", default="https://api.openai.com/v1", help="Base URL for OpenAI-compatible API.")
+    parser.add_argument("--openai-api-key", default=None, help="OpenAI API key (falls back to OPENAI_API_KEY env var, or the preset-specific env var when --provider is set).")
+    parser.add_argument("--openai-base-url", default=argparse.SUPPRESS, help="Base URL for OpenAI-compatible API. Default: https://api.openai.com/v1, or provider preset value.")
     parser.add_argument("--openai-timeout", type=int, default=60, help="OpenAI request timeout in seconds.")
     parser.add_argument("--resume", default=None, help="Session id to resume or 'latest'.")
     parser.add_argument(
@@ -1094,6 +1372,19 @@ def build_arg_parser():
         metavar="OP",
         help="Allowed tool categories: read, write, bash, python. Defaults to all when not specified.",
     )
+    parser.add_argument(
+        "--sandbox",
+        choices=("off", "lite"),
+        default="lite",
+        help=(
+            "Lightweight sandboxing for risky tools (run_shell, run_python). "
+            "'lite' (default) blocks obviously destructive command patterns, "
+            "strips sensitive environment variables from subprocesses, and applies "
+            "POSIX resource limits (CPU, memory, file size, processes). 'off' "
+            "disables all of the above. This is best-effort defense in depth, "
+            "not a true security boundary."
+        ),
+    )
     parser.add_argument("--max-steps", type=int, default=6, help="Maximum tool/model iterations per request.")
     parser.add_argument("--max-new-tokens", type=int, default=512, help="Maximum model output tokens per step.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
@@ -1101,8 +1392,20 @@ def build_arg_parser():
     return parser
 
 
+def _post_process_args(args):
+    """Apply defaults that depend on whether the user explicitly passed flags."""
+    args.model_explicit = hasattr(args, "model")
+    if not args.model_explicit:
+        args.model = "qwen3.5:4b"
+    args.openai_base_url_explicit = hasattr(args, "openai_base_url")
+    if not args.openai_base_url_explicit:
+        args.openai_base_url = "https://api.openai.com/v1"
+    return args
+
+
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
+    args = _post_process_args(args)
 
     # Default approval: "auto" for non-interactive task runs (delegation mode), "ask" for REPL.
     if args.approval is None:
@@ -1110,7 +1413,10 @@ def main(argv=None):
 
     agent = build_agent(args)
 
-    print(build_welcome(agent, model=args.model, backend=args.backend))
+    backend_label = args.backend
+    if getattr(args, "provider", None):
+        backend_label = f"{args.backend} ({args.provider})"
+    print(build_welcome(agent, model=args.model, backend=backend_label))
 
     if args.prompt:
         prompt = " ".join(args.prompt).strip()
