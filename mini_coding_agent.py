@@ -1063,7 +1063,7 @@ def build_arg_parser():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description="Minimal coding agent supporting Ollama and OpenAI-compatible backends.",
     )
-    parser.add_argument("prompt", nargs="*", help="Optional one-shot task prompt (runs in delegation mode with auto-approval).")
+    parser.add_argument("prompt", nargs="*", help="Optional one-shot task prompt (runs non-interactively with auto-approval by default).")
     parser.add_argument("--cwd", default=".", help="Workspace directory.")
     parser.add_argument(
         "--backend",
