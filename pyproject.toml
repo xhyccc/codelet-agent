@@ -5,11 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mini-coding-agent-ollama"
 version = "0.1.0"
-description = "Minimal standalone coding agent backed by Ollama"
+description = "Minimal standalone coding agent backed by Ollama or any OpenAI-compatible API"
 requires-python = ">=3.10"
 dependencies = [
     "pytest>=9.0.2",
 ]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
 
 [project.scripts]
 mini-coding-agent = "mini_coding_agent:main"

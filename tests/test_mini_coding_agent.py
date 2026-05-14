@@ -1,11 +1,13 @@
 import json
+import sys
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from mini_coding_agent import (
     FakeModelClient,
     MiniAgent,
     OllamaModelClient,
+    OpenAIModelClient,
     SessionStore,
     WorkspaceContext,
     build_welcome,
@@ -239,7 +241,7 @@ def test_welcome_screen_keeps_box_shape_for_long_paths(tmp_path):
     deep.mkdir(parents=True)
     agent = build_agent(deep, [])
 
-    welcome = build_welcome(agent, model="qwen3.5:4b", host="http://127.0.0.1:11434")
+    welcome = build_welcome(agent, model="qwen3.5:4b", host="http://127.0.0.1:11434", backend="ollama")
     lines = welcome.splitlines()
 
     assert len(lines) >= 5
@@ -397,3 +399,156 @@ def test_ollama_client_posts_expected_payload():
     assert captured["body"]["raw"] is False
     assert captured["body"]["think"] is False
     assert captured["body"]["options"]["num_predict"] == 42
+
+
+def _make_mock_openai_module():
+    """Return a minimal mock of the openai module for unit tests."""
+    mock_openai = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "<final>ok</final>"
+    mock_openai.OpenAI.return_value.chat.completions.create.return_value = mock_response
+    return mock_openai
+
+
+def test_openai_client_posts_expected_payload():
+    mock_openai = _make_mock_openai_module()
+
+    client = OpenAIModelClient(
+        model="gpt-4o-mini",
+        api_key="test-key",
+        base_url="https://api.openai.com/v1",
+        temperature=0.2,
+        top_p=0.9,
+        timeout=30,
+    )
+
+    with patch.dict(sys.modules, {"openai": mock_openai}):
+        result = client.complete("hello", 42)
+
+    assert result == "<final>ok</final>"
+    mock_openai.OpenAI.assert_called_once_with(api_key="test-key", base_url="https://api.openai.com/v1")
+    mock_openai.OpenAI.return_value.chat.completions.create.assert_called_once_with(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "hello"}],
+        max_tokens=42,
+        temperature=0.2,
+        top_p=0.9,
+        timeout=30,
+    )
+
+
+def test_openai_client_omits_base_url_when_none():
+    mock_openai = _make_mock_openai_module()
+
+    client = OpenAIModelClient(
+        model="gpt-4o-mini",
+        api_key="test-key",
+        base_url=None,
+        temperature=0.2,
+        top_p=0.9,
+        timeout=30,
+    )
+
+    with patch.dict(sys.modules, {"openai": mock_openai}):
+        client.complete("hello", 10)
+
+    call_kwargs = mock_openai.OpenAI.call_args
+    assert "base_url" not in call_kwargs.kwargs
+
+
+def test_openai_client_raises_on_api_error():
+    mock_openai = _make_mock_openai_module()
+    mock_openai.APIError = type("APIError", (Exception,), {})
+    mock_openai.OpenAI.return_value.chat.completions.create.side_effect = mock_openai.APIError("bad key")
+
+    client = OpenAIModelClient(
+        model="gpt-4o-mini",
+        api_key="bad",
+        base_url=None,
+        temperature=0.2,
+        top_p=0.9,
+        timeout=30,
+    )
+
+    with patch.dict(sys.modules, {"openai": mock_openai}):
+        with pytest.raises(RuntimeError, match="OpenAI API error"):
+            client.complete("hello", 10)
+
+
+def test_allowed_ops_restricts_available_tools(tmp_path):
+    agent = build_agent(tmp_path, [], allowed_ops={"read"})
+
+    assert "list_files" in agent.tools
+    assert "read_file" in agent.tools
+    assert "search" in agent.tools
+    assert "write_file" not in agent.tools
+    assert "patch_file" not in agent.tools
+    assert "run_shell" not in agent.tools
+    assert "run_python" not in agent.tools
+
+
+def test_allowed_ops_write_only_has_write_tools(tmp_path):
+    agent = build_agent(tmp_path, [], allowed_ops={"write"})
+
+    assert "write_file" in agent.tools
+    assert "patch_file" in agent.tools
+    assert "list_files" not in agent.tools
+    assert "run_shell" not in agent.tools
+    assert "run_python" not in agent.tools
+
+
+def test_allowed_ops_none_has_all_tools(tmp_path):
+    agent = build_agent(tmp_path, [], allowed_ops=None)
+
+    assert "list_files" in agent.tools
+    assert "read_file" in agent.tools
+    assert "search" in agent.tools
+    assert "run_shell" in agent.tools
+    assert "write_file" in agent.tools
+    assert "patch_file" in agent.tools
+    assert "run_python" in agent.tools
+
+
+def test_run_python_tool_executes_code(tmp_path):
+    agent = build_agent(tmp_path, [], allowed_ops={"python"})
+
+    result = agent.run_tool("run_python", {"code": "print('hello from python')", "timeout": 10})
+
+    assert "exit_code: 0" in result
+    assert "hello from python" in result
+
+
+def test_run_python_tool_captures_stderr(tmp_path):
+    agent = build_agent(tmp_path, [], allowed_ops={"python"})
+
+    result = agent.run_tool("run_python", {"code": "import sys; sys.stderr.write('err\\n')", "timeout": 10})
+
+    assert "exit_code: 0" in result
+    assert "err" in result
+
+
+def test_run_python_tool_rejects_empty_code(tmp_path):
+    agent = build_agent(tmp_path, [], allowed_ops={"python"})
+
+    result = agent.run_tool("run_python", {"code": "", "timeout": 10})
+
+    assert result.startswith("error: invalid arguments for run_python")
+
+
+def test_delegate_inherits_allowed_ops(tmp_path):
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool>{"name":"delegate","args":{"task":"inspect README","max_steps":2}}</tool>',
+            "<final>Child result.</final>",
+            "<final>Parent incorporated the child result.</final>",
+        ],
+        allowed_ops={"read"},
+    )
+
+    answer = agent.ask("Use delegation")
+
+    assert answer == "Parent incorporated the child result."
+    tool_events = [item for item in agent.session["history"] if item["role"] == "tool"]
+    assert tool_events[0]["name"] == "delegate"
+    assert "delegate_result" in tool_events[0]["content"]

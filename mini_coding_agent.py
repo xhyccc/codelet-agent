@@ -1,9 +1,11 @@
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 import uuid
@@ -34,6 +36,7 @@ HELP_DETAILS = "\n".join(
 MAX_TOOL_OUTPUT = 4000
 MAX_HISTORY = 12000
 IGNORED_PATH_NAMES = {".git", ".mini-coding-agent", "__pycache__", ".pytest_cache", ".ruff_cache", ".venv", "venv"}
+ALL_TOOL_OPS = frozenset({"read", "write", "bash", "python"})
 
 ##############################
 #### Six Agent Components ####
@@ -222,6 +225,43 @@ class OllamaModelClient:
         return data.get("response", "")
 
 
+class OpenAIModelClient:
+    """Model client for OpenAI-compatible APIs (OpenAI, Azure OpenAI, local servers, etc.)."""
+
+    def __init__(self, model, api_key, base_url, temperature, top_p, timeout):
+        self.model = model
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/") if base_url else None
+        self.temperature = temperature
+        self.top_p = top_p
+        self.timeout = timeout
+
+    def complete(self, prompt, max_new_tokens):
+        try:
+            import openai as _openai
+        except ImportError:
+            raise RuntimeError(
+                "The 'openai' package is required for the OpenAI backend.\n"
+                "Install it with: pip install openai"
+            ) from None
+        kwargs = {"api_key": self.api_key}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        client = _openai.OpenAI(**kwargs)
+        try:
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_new_tokens,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                timeout=self.timeout,
+            )
+        except _openai.APIError as exc:
+            raise RuntimeError(f"OpenAI API error: {exc}") from exc
+        return response.choices[0].message.content or ""
+
+
 class MiniAgent:
     def __init__(
         self,
@@ -235,6 +275,7 @@ class MiniAgent:
         depth=0,
         max_depth=1,
         read_only=False,
+        allowed_ops=None,
     ):
         self.model_client = model_client
         self.workspace = workspace
@@ -246,6 +287,7 @@ class MiniAgent:
         self.depth = depth
         self.max_depth = max_depth
         self.read_only = read_only
+        self.allowed_ops = allowed_ops
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
             "created_at": now(),
@@ -280,44 +322,54 @@ class MiniAgent:
     #### 3) Structured Tools And Permissions ######
     ###############################################
     def build_tools(self):
-        tools = {
-            "list_files": {
+        allowed = self.allowed_ops if self.allowed_ops is not None else ALL_TOOL_OPS
+        tools = {}
+        if "read" in allowed:
+            tools["list_files"] = {
                 "schema": {"path": "str='.'"},
                 "risky": False,
                 "description": "List files in the workspace.",
                 "run": self.tool_list_files,
-            },
-            "read_file": {
+            }
+            tools["read_file"] = {
                 "schema": {"path": "str", "start": "int=1", "end": "int=200"},
                 "risky": False,
                 "description": "Read a UTF-8 file by line range.",
                 "run": self.tool_read_file,
-            },
-            "search": {
+            }
+            tools["search"] = {
                 "schema": {"pattern": "str", "path": "str='.'"},
                 "risky": False,
                 "description": "Search the workspace with rg or a simple fallback.",
                 "run": self.tool_search,
-            },
-            "run_shell": {
+            }
+        if "bash" in allowed:
+            tools["run_shell"] = {
                 "schema": {"command": "str", "timeout": "int=20"},
                 "risky": True,
                 "description": "Run a shell command in the repo root.",
                 "run": self.tool_run_shell,
-            },
-            "write_file": {
+            }
+        if "write" in allowed:
+            tools["write_file"] = {
                 "schema": {"path": "str", "content": "str"},
                 "risky": True,
                 "description": "Write a text file.",
                 "run": self.tool_write_file,
-            },
-            "patch_file": {
+            }
+            tools["patch_file"] = {
                 "schema": {"path": "str", "old_text": "str", "new_text": "str"},
                 "risky": True,
                 "description": "Replace one exact text block in a file.",
                 "run": self.tool_patch_file,
-            },
-        }
+            }
+        if "python" in allowed:
+            tools["run_python"] = {
+                "schema": {"code": "str", "timeout": "int=20"},
+                "risky": True,
+                "description": "Execute Python code in the repo root and return its output.",
+                "run": self.tool_run_python,
+            }
         if self.depth < self.max_depth:
             tools["delegate"] = {
                 "schema": {"task": "str", "max_steps": "int=3"},
@@ -337,16 +389,17 @@ class MiniAgent:
             risk = "approval required" if tool["risky"] else "safe"
             tool_lines.append(f"- {name}({fields}) [{risk}] {tool['description']}")
         tool_text = "\n".join(tool_lines)
-        examples = "\n".join(
-            [
-                '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
-                '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
-                '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
-                '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
-                '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
-                "<final>Done.</final>",
-            ]
-        )
+        all_examples = {
+            "list_files": '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
+            "read_file": '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
+            "write_file": '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
+            "patch_file": '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
+            "run_shell": '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
+            "run_python": '<tool>{"name":"run_python","args":{"code":"import sys; print(sys.version)","timeout":20}}</tool>',
+        }
+        example_lines = [v for name, v in all_examples.items() if name in self.tools]
+        example_lines.append("<final>Done.</final>")
+        examples = "\n".join(example_lines)
         rules = "\n".join([
             "- Use tools instead of guessing about the workspace.",
             "- Return exactly one <tool>...</tool> or one <final>...</final>.",
@@ -363,10 +416,10 @@ class MiniAgent:
             "- When writing tests, match the current implementation unless the user explicitly asked you to change the code.",
             "- New files should be complete and runnable, including obvious imports.",
             "- Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.",
-            "- Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={}.",
+            "- Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, run_python, or delegate with args={}.",
         ])
         return "\n\n".join([
-            "You are Mini-Coding-Agent, a small local coding agent running through Ollama.",
+            "You are Mini-Coding-Agent, a small coding agent.",
             "Rules:\n" + rules,
             "Tools:\n" + tool_text,
             "Valid response examples:\n" + examples,
@@ -527,6 +580,7 @@ class MiniAgent:
             "read_file": '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
             "search": '<tool>{"name":"search","args":{"pattern":"binary_search","path":"."}}</tool>',
             "run_shell": '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
+            "run_python": '<tool>{"name":"run_python","args":{"code":"import sys; print(sys.version)","timeout":20}}</tool>',
             "write_file": '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
             "patch_file": '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
             "delegate": '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>',
@@ -597,6 +651,15 @@ class MiniAgent:
             task = str(args.get("task", "")).strip()
             if not task:
                 raise ValueError("task must not be empty")
+            return
+
+        if name == "run_python":
+            code = str(args.get("code", "")).strip()
+            if not code:
+                raise ValueError("code must not be empty")
+            timeout = int(args.get("timeout", 20))
+            if timeout < 1 or timeout > 120:
+                raise ValueError("timeout must be in [1, 120]")
             return
 
     def approve(self, name, args):
@@ -841,6 +904,36 @@ class MiniAgent:
         path.write_text(text.replace(old_text, str(args["new_text"]), 1), encoding="utf-8")
         return f"patched {path.relative_to(self.root)}"
 
+    def tool_run_python(self, args):
+        code = str(args.get("code", "")).strip()
+        if not code:
+            raise ValueError("code must not be empty")
+        timeout = int(args.get("timeout", 20))
+        if timeout < 1 or timeout > 120:
+            raise ValueError("timeout must be in [1, 120]")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as fh:
+            fh.write(code)
+            tmp_path = fh.name
+        try:
+            result = subprocess.run(
+                [sys.executable, tmp_path],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        finally:
+            os.unlink(tmp_path)
+        return "\n".join(
+            [
+                f"exit_code: {result.returncode}",
+                "stdout:",
+                result.stdout.strip() or "(empty)",
+                "stderr:",
+                result.stderr.strip() or "(empty)",
+            ]
+        )
+
     ###################################################
     #### 6) Delegation And Bounded Subagents ##########
     ###################################################
@@ -860,13 +953,14 @@ class MiniAgent:
             depth=self.depth + 1,
             max_depth=self.max_depth,
             read_only=True,
+            allowed_ops=self.allowed_ops,
         )
         child.session["memory"]["task"] = task
         child.session["memory"]["notes"] = [clip(self.history_text(), 300)]
         return "delegate_result:\n" + child.ask(task)
 
 
-def build_welcome(agent, model, host):
+def build_welcome(agent, model, host=None, *, backend="ollama"):
     width = max(68, min(shutil.get_terminal_size((80, 20)).columns, 84))
     inner = width - 4
     gap = 3
@@ -901,8 +995,9 @@ def build_welcome(agent, model, host):
             divider("-"),
             row(""),
             row("WORKSPACE  " + middle(agent.workspace.cwd, inner - 11)),
-            pair("MODEL", model, "BRANCH", agent.workspace.branch),
-            pair("APPROVAL", agent.approval_policy, "SESSION", agent.session["id"]),
+            pair("MODEL", model, "BACKEND", backend),
+            pair("APPROVAL", agent.approval_policy, "BRANCH", agent.workspace.branch),
+            row("SESSION  " + middle(agent.session["id"], inner - 9)),
             row(""),
         ]
     )
@@ -912,65 +1007,110 @@ def build_welcome(agent, model, host):
 def build_agent(args):
     workspace = WorkspaceContext.build(args.cwd)
     store = SessionStore(Path(workspace.repo_root) / ".mini-coding-agent" / "sessions")
-    model = OllamaModelClient(
-        model=args.model,
-        host=args.host,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        timeout=args.ollama_timeout,
-    )
+
+    if args.backend == "openai":
+        api_key = args.openai_api_key or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "OpenAI API key is required. Set --openai-api-key or the OPENAI_API_KEY environment variable."
+            )
+        model_client = OpenAIModelClient(
+            model=args.model,
+            api_key=api_key,
+            base_url=args.openai_base_url,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            timeout=args.openai_timeout,
+        )
+    else:
+        model_client = OllamaModelClient(
+            model=args.model,
+            host=args.host,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            timeout=args.ollama_timeout,
+        )
+
+    allowed_ops = set(args.allow) if args.allow else None
+
     session_id = args.resume
     if session_id == "latest":
         session_id = store.latest()
     if session_id:
         return MiniAgent.from_session(
-            model_client=model,
+            model_client=model_client,
             workspace=workspace,
             session_store=store,
             session_id=session_id,
             approval_policy=args.approval,
             max_steps=args.max_steps,
             max_new_tokens=args.max_new_tokens,
+            allowed_ops=allowed_ops,
         )
     return MiniAgent(
-        model_client=model,
+        model_client=model_client,
         workspace=workspace,
         session_store=store,
         approval_policy=args.approval,
         max_steps=args.max_steps,
         max_new_tokens=args.max_new_tokens,
+        allowed_ops=allowed_ops,
     )
 
 
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        description="Minimal coding agent for Ollama models.",
+        description="Minimal coding agent supporting Ollama and OpenAI-compatible backends.",
     )
-    parser.add_argument("prompt", nargs="*", help="Optional one-shot prompt.")
+    parser.add_argument("prompt", nargs="*", help="Optional one-shot task prompt (runs in delegation mode with auto-approval).")
     parser.add_argument("--cwd", default=".", help="Workspace directory.")
-    parser.add_argument("--model", default="qwen3.5:4b", help="Ollama model name.")
+    parser.add_argument(
+        "--backend",
+        choices=("ollama", "openai"),
+        default="ollama",
+        help="Model backend to use.",
+    )
+    parser.add_argument("--model", default="qwen3.5:4b", help="Model name (Ollama model or OpenAI model id).")
+    # Ollama-specific flags
     parser.add_argument("--host", default="http://127.0.0.1:11434", help="Ollama server URL.")
     parser.add_argument("--ollama-timeout", type=int, default=300, help="Ollama request timeout in seconds.")
+    # OpenAI-specific flags
+    parser.add_argument("--openai-api-key", default=None, help="OpenAI API key (falls back to OPENAI_API_KEY env var).")
+    parser.add_argument("--openai-base-url", default="https://api.openai.com/v1", help="Base URL for OpenAI-compatible API.")
+    parser.add_argument("--openai-timeout", type=int, default=60, help="OpenAI request timeout in seconds.")
     parser.add_argument("--resume", default=None, help="Session id to resume or 'latest'.")
     parser.add_argument(
         "--approval",
         choices=("ask", "auto", "never"),
-        default="ask",
-        help="Approval policy for risky tools; auto grants the model arbitrary command execution and file writes.",
+        default=None,
+        help="Approval policy for risky tools. Defaults to 'auto' when a task prompt is given (delegation mode), 'ask' for interactive mode.",
+    )
+    parser.add_argument(
+        "--allow",
+        nargs="+",
+        choices=("read", "write", "bash", "python"),
+        default=None,
+        metavar="OP",
+        help="Allowed tool categories: read, write, bash, python. Defaults to all when not specified.",
     )
     parser.add_argument("--max-steps", type=int, default=6, help="Maximum tool/model iterations per request.")
     parser.add_argument("--max-new-tokens", type=int, default=512, help="Maximum model output tokens per step.")
-    parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to Ollama.")
-    parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to Ollama.")
+    parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
+    parser.add_argument("--top-p", type=float, default=0.9, help="Top-p nucleus sampling value.")
     return parser
 
 
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
+
+    # Default approval: "auto" for non-interactive task runs (delegation mode), "ask" for REPL.
+    if args.approval is None:
+        args.approval = "auto" if args.prompt else "ask"
+
     agent = build_agent(args)
 
-    print(build_welcome(agent, model=args.model, host=args.host))
+    print(build_welcome(agent, model=args.model, backend=args.backend))
 
     if args.prompt:
         prompt = " ".join(args.prompt).strip()
