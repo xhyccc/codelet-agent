@@ -182,7 +182,8 @@ SANDBOX_ENV_STRIP_PATTERNS = (
 # Default resource limits for sandboxed subprocesses (POSIX only). We intentionally
 # do NOT set RLIMIT_NPROC by default because it is enforced per real user ID,
 # not per process tree, so a tight value would interact poorly with other
-# processes already running under the same user (CI, IDEs, etc.).
+# processes already running under the same user (CI, IDEs, etc.). Callers can
+# still opt in by passing a `max_processes` value to `sandbox_preexec`.
 SANDBOX_DEFAULT_LIMITS = {
     "cpu_seconds": 30,        # RLIMIT_CPU
     "address_space_bytes": 1024 * 1024 * 1024,  # RLIMIT_AS: 1 GiB

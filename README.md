@@ -15,7 +15,7 @@ It is a minimal local agent loop with:
 - transcript and memory persistence
 - bounded delegation
 
-The agent supports three model backends: **Ollama** (default, local), any **OpenAI-compatible API**, and convenience presets for popular custom LLM providers (**Kimi/Moonshot**, **GLM/Zhipu**, **SiliconFlow**, **DeepSeek**, **OpenRouter**, **Together**, **DashScope**, ...).
+The agent supports two model backends: **Ollama** (default, local) and any **OpenAI-compatible API**. The OpenAI backend ships with convenience presets for popular custom LLM providers (**Kimi/Moonshot**, **GLM/Zhipu**, **SiliconFlow**, **DeepSeek**, **OpenRouter**, **Together**, **DashScope**, ...) so you can pick one with a single `--provider` flag.
 
 <a href="https://magazine.sebastianraschka.com/p/components-of-a-coding-agent">
   <img src="https://substack-post-media.s3.amazonaws.com/public/images/49b97718-57f4-4977-99c8-8ad5c4d32af3_1548x862.png" width="500px">
