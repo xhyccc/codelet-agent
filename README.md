@@ -15,7 +15,7 @@ It is a minimal local agent loop with:
 - transcript and memory persistence
 - bounded delegation
 
-The agent supports two model backends: **Ollama** (default, local) and any **OpenAI-compatible API**.
+The agent supports two model backends: **Ollama** (default, local) and any **OpenAI-compatible API**. The OpenAI backend ships with convenience presets for popular custom LLM providers (**Kimi/Moonshot**, **GLM/Zhipu**, **SiliconFlow**, **DeepSeek**, **OpenRouter**, **Together**, **DashScope**, ...) so you can pick one with a single `--provider` flag.
 
 <a href="https://magazine.sebastianraschka.com/p/components-of-a-coding-agent">
   <img src="https://substack-post-media.s3.amazonaws.com/public/images/49b97718-57f4-4977-99c8-8ad5c4d32af3_1548x862.png" width="500px">
@@ -160,6 +160,51 @@ uv run mini-coding-agent --backend openai --model your-model \
   --openai-base-url http://localhost:8000/v1 --openai-api-key none
 ```
 
+### Custom LLM API providers (Kimi, GLM, SiliconFlow, ...)
+
+For convenience, the agent ships with presets for popular OpenAI-compatible
+LLM API providers. Pick one with `--provider` and the agent will fill in the
+correct base URL, default model, and the conventional API key environment
+variable for you. The OpenAI client wrapper is reused under the hood.
+
+| `--provider` | Provider | Default model | API key env var |
+|---|---|---|---|
+| `openai` | OpenAI | `gpt-4o-mini` | `OPENAI_API_KEY` |
+| `kimi` / `moonshot` | Moonshot AI (Kimi) | `moonshot-v1-8k` | `MOONSHOT_API_KEY` |
+| `glm` / `zhipu` | Zhipu AI (GLM) | `glm-4-flash` | `ZHIPU_API_KEY` |
+| `siliconflow` | SiliconFlow | `Qwen/Qwen2.5-7B-Instruct` | `SILICONFLOW_API_KEY` |
+| `deepseek` | DeepSeek | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| `openrouter` | OpenRouter | `openai/gpt-4o-mini` | `OPENROUTER_API_KEY` |
+| `together` | Together AI | `meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo` | `TOGETHER_API_KEY` |
+| `dashscope` | Alibaba DashScope (Qwen) | `qwen-plus` | `DASHSCOPE_API_KEY` |
+| `custom` | Any other OpenAI-compatible endpoint | (must pass `--model`) | `CUSTOM_LLM_API_KEY` (or `OPENAI_API_KEY`) |
+
+Examples:
+
+```bash
+# Kimi / Moonshot
+export MOONSHOT_API_KEY=sk-...
+uv run mini-coding-agent --provider kimi "List the files in this repo."
+
+# Zhipu GLM
+export ZHIPU_API_KEY=sk-...
+uv run mini-coding-agent --provider glm --model glm-4-plus "Summarize README.md"
+
+# SiliconFlow
+export SILICONFLOW_API_KEY=sk-...
+uv run mini-coding-agent --provider siliconflow
+
+# Any other OpenAI-compatible endpoint
+export CUSTOM_LLM_API_KEY=sk-...
+uv run mini-coding-agent --provider custom \
+  --openai-base-url https://my-internal-llm.example/v1 \
+  --model my-internal-model
+```
+
+`--model`, `--openai-base-url`, and `--openai-api-key` always take precedence
+over the preset, so you can target a specific model (e.g. `moonshot-v1-32k`)
+or override the endpoint as needed.
+
 ### One-shot (non-interactive) mode
 
 Pass a task as a positional argument to run the agent non-interactively and exit:
@@ -192,6 +237,44 @@ Example:
 
 ```bash
 uv run mini-coding-agent --approval auto
+```
+
+
+
+&nbsp;
+## Lightweight Sandboxing
+
+Risky tools (`run_shell` and `run_python`) run with best-effort, lightweight
+sandboxing by default. This is not a true security boundary — always combine
+with `--approval ask` and run untrusted prompts in a real VM / container —
+but it makes accidental damage and obvious prompt-injection attacks harder.
+
+When `--sandbox lite` (the default) is active, the agent:
+
+- **Blocks obviously destructive command patterns** before they ever reach the
+  shell: `sudo`, `rm -rf /`, `mkfs`, `dd of=/dev/...`, `shutdown` / `reboot`,
+  `curl ... | bash`, fork bombs, `chmod 777 /`, writes to raw disk devices,
+  and similar patterns.
+- **Blocks dangerous Python idioms** in `run_python`, such as
+  `shutil.rmtree('/etc')`, `open('/dev/sda', 'wb')`, or shelling out to `sudo`.
+- **Strips sensitive environment variables** (anything matching `*_API_KEY`,
+  `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `AWS_*`, `AZURE_*`, `GCP_*`,
+  `GITHUB_TOKEN`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `PYTHONPATH`)
+  from subprocesses started by the agent.
+- **Applies POSIX resource limits** to subprocesses where supported:
+  CPU time (`RLIMIT_CPU` = 30s), virtual memory (`RLIMIT_AS` = 1 GiB), and
+  maximum file size (`RLIMIT_FSIZE` = 64 MiB).
+
+Disable the sandbox with `--sandbox off` if you need it out of the way (for
+example, when running CI scripts that legitimately need access to secrets in
+the environment).
+
+```bash
+# default — lightweight sandbox enabled
+uv run mini-coding-agent
+
+# disable
+uv run mini-coding-agent --sandbox off
 ```
 
 
@@ -260,6 +343,8 @@ Important flags:
   sets the workspace directory the agent should inspect and modify; default: `.`
 - `--backend`
   selects the model backend: `ollama` or `openai`; default: `ollama`
+- `--provider`
+  convenience preset for a custom OpenAI-compatible LLM API (`openai`, `kimi`/`moonshot`, `glm`/`zhipu`, `siliconflow`, `deepseek`, `openrouter`, `together`, `dashscope`, or `custom`); sets `--backend openai`, the appropriate `--openai-base-url`, and reads the API key from the provider's conventional env var (e.g. `MOONSHOT_API_KEY` for `kimi`)
 - `--model`
   selects the model name, such as `qwen3.5:4b` for Ollama or `gpt-4o-mini` for OpenAI; default: `qwen3.5:4b`
 - `--host`
@@ -278,6 +363,8 @@ Important flags:
   controls how risky tools are handled: `ask`, `auto`, or `never`; defaults to `auto` for one-shot prompts, `ask` for interactive mode
 - `--allow`
   restricts which tool categories are available: `read`, `write`, `bash`, `python`; defaults to all categories
+- `--sandbox`
+  lightweight sandboxing for `run_shell` / `run_python`: `lite` (default; blocks destructive command patterns, strips sensitive env vars, applies POSIX resource limits) or `off`
 - `--max-steps`
   limits how many model and tool turns are allowed for one user request; default: `6`
 - `--max-new-tokens`
