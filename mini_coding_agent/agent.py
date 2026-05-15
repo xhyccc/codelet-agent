@@ -1,0 +1,346 @@
+"""The :class:`MiniAgent` orchestrates the tool loop.
+
+The agent ties together: workspace context (``workspace``), prompt assembly
+(``prompt``), parsing (``parsing``), the tool registry (``tools``), and the
+durable session store (``sessions``). All knobs that used to be hard-coded
+(token budgets, history caps, tool examples, rules, sandbox patterns,
+retry-notice text) now flow in via the YAML-backed config object.
+"""
+
+import json
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+from .config import BUILTIN_DEFAULTS, deep_merge, load_project_rules
+from . import parsing
+from .prompt import (
+    build_history_text,
+    build_memory_text,
+    build_prefix,
+    build_prompt,
+)
+from . import sandbox as sandbox_module
+from .tools import ToolRegistry, tool_argument_validators
+from .utils import clip, now
+
+
+class MiniAgent:
+    """A small, deterministic harness around a non-deterministic model."""
+
+    def __init__(
+        self,
+        model_client,
+        workspace,
+        session_store,
+        session=None,
+        approval_policy="ask",
+        max_steps=None,
+        max_new_tokens=None,
+        depth=0,
+        max_depth=None,
+        read_only=False,
+        allowed_ops=None,
+        sandbox="lite",
+        config=None,
+    ):
+        # Use packaged defaults if no config was provided. ``deep_merge``
+        # gives us a fresh, mutation-safe copy.
+        self.config = deep_merge(BUILTIN_DEFAULTS, config or {})
+        # Apply sandbox policy from the config (if any).
+        sandbox_module.apply_config(self.config.get("sandbox") or {})
+
+        harness = self.config.get("harness", {})
+
+        self.model_client = model_client
+        self.workspace = workspace
+        self.root = Path(workspace.repo_root)
+        self.session_store = session_store
+        self.approval_policy = approval_policy
+        self.max_steps = max_steps if max_steps is not None else harness.get("max_steps", 6)
+        self.max_new_tokens = (
+            max_new_tokens if max_new_tokens is not None else harness.get("max_new_tokens", 512)
+        )
+        self.depth = depth
+        self.max_depth = max_depth if max_depth is not None else harness.get("max_depth", 1)
+        self.read_only = read_only
+        self.allowed_ops = allowed_ops
+        self.sandbox = sandbox if sandbox in ("off", "lite") else "lite"
+        self.session = session or {
+            "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
+            "created_at": now(),
+            "workspace_root": workspace.repo_root,
+            "history": [],
+            "memory": {"task": "", "files": [], "notes": []},
+        }
+
+        # Build the per-agent tool registry and stable prompt prefix.
+        self.registry = ToolRegistry(self)
+        self.tools = self.registry.build()
+
+        # Pull project rules text from workspace files declared in config.
+        project_rules_text = load_project_rules(
+            self.workspace.repo_root,
+            self.config.get("project_rules_files") or [],
+        )
+        self.prefix = build_prefix(
+            self.config.get("prompts", {}),
+            self.tools,
+            self.workspace.text(),
+            project_rules_text=project_rules_text,
+        )
+        self.session_path = self.session_store.save(self.session)
+
+    @classmethod
+    def from_session(cls, model_client, workspace, session_store, session_id, **kwargs):
+        return cls(
+            model_client=model_client,
+            workspace=workspace,
+            session_store=session_store,
+            session=session_store.load(session_id),
+            **kwargs,
+        )
+
+    @staticmethod
+    def remember(bucket, item, limit):
+        """Move ``item`` to the end of ``bucket`` and cap the bucket length."""
+        if not item:
+            return
+        if item in bucket:
+            bucket.remove(item)
+        bucket.append(item)
+        del bucket[:-limit]
+
+    # ---- prompt assembly ------------------------------------------------
+
+    def memory_text(self):
+        return build_memory_text(self.session["memory"])
+
+    def history_text(self):
+        harness = self.config.get("harness", {})
+        return build_history_text(
+            self.session["history"],
+            max_tool_output=harness.get("max_tool_output", 4000),
+            max_history=harness.get("max_history", 12000),
+        )
+
+    def prompt(self, user_message):
+        return build_prompt(self.prefix, self.memory_text(), self.history_text(), user_message)
+
+    # ---- session bookkeeping -------------------------------------------
+
+    def record(self, item):
+        self.session["history"].append(item)
+        self.session_path = self.session_store.save(self.session)
+
+    def note_tool(self, name, args, result):
+        memory = self.session["memory"]
+        path = args.get("path")
+        if name in {"read_file", "write_file", "patch_file"} and path:
+            self.remember(memory["files"], str(path), 8)
+        note = f"{name}: {clip(str(result).replace(chr(10), ' '), 220)}"
+        self.remember(memory["notes"], note, 5)
+
+    # ---- main loop ------------------------------------------------------
+
+    def ask(self, user_message):
+        memory = self.session["memory"]
+        if not memory["task"]:
+            memory["task"] = clip(user_message.strip(), 300)
+        self.record({"role": "user", "content": user_message, "created_at": now()})
+
+        retry_template = self.config.get("prompts", {}).get(
+            "retry_notice", BUILTIN_DEFAULTS["prompts"]["retry_notice"]
+        )
+        tool_steps = 0
+        attempts = 0
+        max_attempts = max(self.max_steps * 3, self.max_steps + 4)
+
+        while tool_steps < self.max_steps and attempts < max_attempts:
+            attempts += 1
+            raw = self.model_client.complete(self.prompt(user_message), self.max_new_tokens)
+            kind, payload = parsing.parse_model_output(raw, retry_template)
+
+            if kind == "tool":
+                tool_steps += 1
+                name = payload.get("name", "")
+                args = payload.get("args", {})
+                result = self.run_tool(name, args)
+                self.record(
+                    {
+                        "role": "tool",
+                        "name": name,
+                        "args": args,
+                        "content": result,
+                        "created_at": now(),
+                    }
+                )
+                self.note_tool(name, args, result)
+                continue
+
+            if kind == "retry":
+                self.record({"role": "assistant", "content": payload, "created_at": now()})
+                continue
+
+            final = (payload or raw).strip()
+            self.record({"role": "assistant", "content": final, "created_at": now()})
+            self.remember(memory["notes"], clip(final, 220), 5)
+            return final
+
+        if attempts >= max_attempts and tool_steps < self.max_steps:
+            final = "Stopped after too many malformed model responses without a valid tool call or final answer."
+        else:
+            final = "Stopped after reaching the step limit without a final answer."
+        self.record({"role": "assistant", "content": final, "created_at": now()})
+        return final
+
+    # ---- tool dispatch --------------------------------------------------
+
+    def run_tool(self, name, args):
+        tool = self.tools.get(name)
+        if tool is None:
+            return f"error: unknown tool '{name}'"
+        try:
+            self.validate_tool(name, args)
+        except Exception as exc:
+            example = self.tool_example(name)
+            message = f"error: invalid arguments for {name}: {exc}"
+            if example:
+                message += f"\nexample: {example}"
+            return message
+        if self.repeated_tool_call(name, args):
+            return f"error: repeated identical tool call for {name}; choose a different tool or return a final answer"
+        if tool["risky"] and not self.approve(name, args):
+            return f"error: approval denied for {name}"
+        try:
+            return clip(tool["run"](args))
+        except Exception as exc:
+            return f"error: tool {name} failed: {exc}"
+
+    def repeated_tool_call(self, name, args):
+        tool_events = [item for item in self.session["history"] if item["role"] == "tool"]
+        if len(tool_events) < 2:
+            return False
+        recent = tool_events[-2:]
+        return all(item["name"] == name and item["args"] == args for item in recent)
+
+    def tool_example(self, name):
+        return (self.config.get("prompts", {}).get("examples") or {}).get(name, "")
+
+    def validate_tool(self, name, args):
+        tool_argument_validators(self, name, args)
+
+    def approve(self, name, args):
+        if self.read_only:
+            return False
+        if self.approval_policy == "auto":
+            return True
+        if self.approval_policy == "never":
+            return False
+        try:
+            answer = input(f"approve {name} {json.dumps(args, ensure_ascii=True)}? [y/N] ")
+        except EOFError:
+            return False
+        return answer.strip().lower() in {"y", "yes"}
+
+    # ---- parsing helpers (kept as classmethods for backward compat) -----
+
+    @staticmethod
+    def parse(raw):
+        retry_template = BUILTIN_DEFAULTS["prompts"]["retry_notice"]
+        return parsing.parse_model_output(raw, retry_template)
+
+    @staticmethod
+    def retry_notice(problem=None):
+        return parsing.retry_notice(BUILTIN_DEFAULTS["prompts"]["retry_notice"], problem)
+
+    @staticmethod
+    def parse_xml_tool(raw):
+        return parsing.parse_xml_tool(raw)
+
+    @staticmethod
+    def parse_attrs(text):
+        return parsing.parse_attrs(text)
+
+    @staticmethod
+    def extract(text, tag):
+        return parsing.extract(text, tag)
+
+    @staticmethod
+    def extract_raw(text, tag):
+        return parsing.extract_raw(text, tag)
+
+    # ---- session management --------------------------------------------
+
+    def reset(self):
+        self.session["history"] = []
+        self.session["memory"] = {"task": "", "files": [], "notes": []}
+        self.session_store.save(self.session)
+
+    # ---- path safety ---------------------------------------------------
+
+    def path_is_within_root(self, resolved):
+        probe = resolved
+        while not probe.exists() and probe.parent != probe:
+            probe = probe.parent
+        for candidate in (probe, *probe.parents):
+            try:
+                if candidate.samefile(self.root):
+                    return True
+            except OSError:
+                continue
+        return False
+
+    def path(self, raw_path):
+        path = Path(raw_path)
+        path = path if path.is_absolute() else self.root / path
+        resolved = path.resolve()
+        if not self.path_is_within_root(resolved):
+            raise ValueError(f"path escapes workspace: {raw_path}")
+        return resolved
+
+    # ---- thin tool wrappers (kept for backward compatibility) ----------
+
+    def tool_list_files(self, args):
+        return self.registry.tool_list_files(args)
+
+    def tool_read_file(self, args):
+        return self.registry.tool_read_file(args)
+
+    def tool_search(self, args):
+        return self.registry.tool_search(args)
+
+    def tool_glob(self, args):
+        return self.registry.tool_glob(args)
+
+    def tool_run_shell(self, args):
+        return self.registry.tool_run_shell(args)
+
+    def tool_run_python(self, args):
+        return self.registry.tool_run_python(args)
+
+    def tool_write_file(self, args):
+        return self.registry.tool_write_file(args)
+
+    def tool_patch_file(self, args):
+        return self.registry.tool_patch_file(args)
+
+    def tool_delegate(self, args):
+        return self.registry.tool_delegate(args)
+
+    def build_tools(self):
+        """Backwards-compat shim: rebuild the tool registry."""
+        return ToolRegistry(self).build()
+
+    def build_prefix(self):
+        """Backwards-compat shim: re-render the stable prompt prefix."""
+        project_rules_text = load_project_rules(
+            self.workspace.repo_root,
+            self.config.get("project_rules_files") or [],
+        )
+        return build_prefix(
+            self.config.get("prompts", {}),
+            self.tools,
+            self.workspace.text(),
+            project_rules_text=project_rules_text,
+        )

@@ -3,7 +3,7 @@
 
 This folder contains a small standalone coding agent:
 
-- code: `mini_coding_agent.py`
+- code: `mini_coding_agent/` (package)
 - CLI: `mini-coding-agent`
 
 It is a minimal local agent loop with:
@@ -63,7 +63,7 @@ Optional:
 - `uv` for environment management and the `mini-coding-agent` CLI entry point
 - `openai` Python package when using the OpenAI backend (`pip install openai`)
 
-This project has no mandatory Python runtime dependency beyond the standard library for the Ollama backend, so you can run it directly with `python mini_coding_agent.py` if you do not want to use `uv`.
+This project has no mandatory Python runtime dependency beyond the standard library for the Ollama backend, so you can run it directly with `python -m mini_coding_agent` if you do not want to use `uv`. (PyYAML is optional — install it only if you want to override the packaged YAML config; otherwise the built-in defaults are used.)
 
 &nbsp;
 ## Install Ollama
@@ -131,7 +131,7 @@ Without `uv`, run the script directly:
 
 ```bash
 cd mini-coding-agent-CLI
-python mini_coding_agent.py
+python -m mini_coding_agent
 ```
 
 By default it uses:
@@ -331,7 +331,7 @@ uv run mini-coding-agent --help
 Without `uv`:
 
 ```bash
-python mini_coding_agent.py --help
+python -m mini_coding_agent --help
 ```
 
 CLI flags are passed before the agent starts. Use them to choose the workspace,
@@ -373,6 +373,35 @@ Important flags:
   controls sampling randomness; default: `0.2`
 - `--top-p`
   controls nucleus sampling for generation; default: `0.9`
+- `--config`
+  path to a YAML file that overrides any subset of the packaged prompt/harness defaults
+
+&nbsp;
+## Configuration via YAML
+
+All prompts (agent identity, rules, examples, retry notices, coordinator/override layers) and harness parameters (`max_steps`, `max_new_tokens`, timeouts, sampling, `allowed_ops`, `sandbox`, `approval`, sandbox denylists) are loaded from `mini_coding_agent/config/default.yaml`. You can override any subset of them without touching the packaged file:
+
+1. Pass `--config path/to/your.yaml` on the CLI, or
+2. Drop a `.mini-coding-agent/config.yaml` file at the root of your workspace - it is auto-discovered.
+
+Resolution order is: packaged defaults < workspace `.mini-coding-agent/config.yaml` < explicit `--config` file. Per-call CLI flags still take precedence over everything in YAML.
+
+Project-specific rules placed in `AGENTS.md` (or `.mini-coding-agent/rules.md`) at the repo root are automatically pulled into the prompt's `<project-rules>` layer.
+
+PyYAML is an optional dependency. Install with `pip install pyyaml` (or `pip install -e .[yaml]`) only if you want to load custom YAML; otherwise the agent uses its built-in defaults.
+
+### Prompt architecture
+
+The prompt is assembled in up to six XML-tagged layers ordered from most stable (top, cacheable) to most volatile (bottom):
+
+1. `<agent-identity>` — who the agent is. **Always present.**
+2. `<system-defaults>` — immutable rules, tool catalog, response examples. **Always present.**
+3. `<project-rules>` — per-repo overrides (`AGENTS.md`, `.mini-coding-agent/rules.md`). Emitted only when content is found.
+4. `<coordinator>` — delegation/swarm guidance. Emitted only when delegation is enabled.
+5. `<override>` — volatile session overrides from YAML config or CLI. Emitted only when configured.
+6. `<workspace>` — workspace snapshot (cwd, branch, status, docs). **Always present.**
+
+Then per-turn volatile state is appended in `<memory>`, `<transcript>`, `<request>` tags. This shape mirrors the "Immutable Prompt Principle" so KV caches can be reused across turns.
 
 &nbsp;
 ## Available Tools
@@ -384,6 +413,7 @@ The agent exposes the following tools to the model. Tools are grouped into categ
 | `list_files` | `read` | no | List files in the workspace |
 | `read_file` | `read` | no | Read a UTF-8 file by line range |
 | `search` | `read` | no | Search the workspace with `rg` or a simple fallback |
+| `glob` | `read` | no | List workspace files matching a glob pattern (e.g. `**/*.py`) |
 | `write_file` | `write` | **yes** | Write a text file |
 | `patch_file` | `write` | **yes** | Replace one exact text block in a file |
 | `run_shell` | `bash` | **yes** | Run a shell command in the repo root |
