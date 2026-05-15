@@ -46,6 +46,7 @@ class MiniAgent:
         allowed_ops=None,
         sandbox="lite",
         config=None,
+        tool_output_callback=None,
     ):
         # Use packaged defaults if no config was provided. ``deep_merge``
         # gives us a fresh, mutation-safe copy.
@@ -69,6 +70,7 @@ class MiniAgent:
         self.read_only = read_only
         self.allowed_ops = allowed_ops
         self.sandbox = sandbox if sandbox in ("off", "lite") else "lite"
+        self.tool_output_callback = tool_output_callback
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
             "created_at": now(),
@@ -225,6 +227,8 @@ class MiniAgent:
                 name = payload.get("name", "")
                 args = payload.get("args", {})
                 result = self.run_tool(name, args)
+                if self.tool_output_callback is not None:
+                    self.tool_output_callback(name, result)
                 self.record(
                     {
                         "role": "tool",

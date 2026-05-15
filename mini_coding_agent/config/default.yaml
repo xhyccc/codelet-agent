@@ -46,6 +46,7 @@ prompts:
     - New files should be complete and runnable, including obvious imports.
     - Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.
     - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, run_python, or delegate with args={}.
+    - After running a tool, always include the relevant output in your <final> answer. Never respond with just "Done." if there is actual output to show.
 
   # Per-tool example payloads. Used both to show the model valid syntax and to
   # surface a hint when validate_tool rejects bad arguments.
@@ -113,6 +114,10 @@ harness:
   # Default request timeouts (seconds).
   ollama_timeout: 300
   openai_timeout: 60
+  # Default and maximum timeouts for run_shell / run_python tool calls (seconds).
+  # The model may pass a lower ``timeout`` arg; it is clamped to [1, tool_max_timeout].
+  tool_timeout: 20
+  tool_max_timeout: 120
   # Default tool category allowlist. ``null`` means "all".
   allowed_ops: null
   # "lite" enables conservative pattern denylists plus POSIX rlimits and a

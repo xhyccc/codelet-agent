@@ -185,9 +185,11 @@ class ToolRegistry:
         command = str(args.get("command", "")).strip()
         if not command:
             raise ValueError("command must not be empty")
-        timeout = int(args.get("timeout", 20))
-        if timeout < 1 or timeout > 120:
-            raise ValueError("timeout must be in [1, 120]")
+        harness = agent.config.get("harness", {})
+        max_timeout = int(harness.get("tool_max_timeout", 120))
+        timeout = int(args.get("timeout", harness.get("tool_timeout", 20)))
+        if timeout < 1 or timeout > max_timeout:
+            raise ValueError(f"timeout must be in [1, {max_timeout}]")
 
         sandbox_kwargs = {}
         if agent.sandbox == "lite":
@@ -223,9 +225,11 @@ class ToolRegistry:
         code = str(args.get("code", "")).strip()
         if not code:
             raise ValueError("code must not be empty")
-        timeout = int(args.get("timeout", 20))
-        if timeout < 1 or timeout > 120:
-            raise ValueError("timeout must be in [1, 120]")
+        harness = agent.config.get("harness", {})
+        max_timeout = int(harness.get("tool_max_timeout", 120))
+        timeout = int(args.get("timeout", harness.get("tool_timeout", 20)))
+        if timeout < 1 or timeout > max_timeout:
+            raise ValueError(f"timeout must be in [1, {max_timeout}]")
 
         sandbox_kwargs = {}
         if agent.sandbox == "lite":
@@ -358,9 +362,11 @@ def tool_argument_validators(agent, name, args):
         command = str(args.get("command", "")).strip()
         if not command:
             raise ValueError("command must not be empty")
-        timeout = int(args.get("timeout", 20))
-        if timeout < 1 or timeout > 120:
-            raise ValueError("timeout must be in [1, 120]")
+        harness = agent.config.get("harness", {})
+        max_timeout = int(harness.get("tool_max_timeout", 120))
+        timeout = int(args.get("timeout", harness.get("tool_timeout", 20)))
+        if timeout < 1 or timeout > max_timeout:
+            raise ValueError(f"timeout must be in [1, {max_timeout}]")
         return
 
     if name == "write_file":
@@ -398,7 +404,9 @@ def tool_argument_validators(agent, name, args):
         code = str(args.get("code", "")).strip()
         if not code:
             raise ValueError("code must not be empty")
-        timeout = int(args.get("timeout", 20))
-        if timeout < 1 or timeout > 120:
-            raise ValueError("timeout must be in [1, 120]")
+        harness = agent.config.get("harness", {})
+        max_timeout = int(harness.get("tool_max_timeout", 120))
+        timeout = int(args.get("timeout", harness.get("tool_timeout", 20)))
+        if timeout < 1 or timeout > max_timeout:
+            raise ValueError(f"timeout must be in [1, {max_timeout}]")
         return

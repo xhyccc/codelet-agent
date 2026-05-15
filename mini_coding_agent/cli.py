@@ -16,6 +16,13 @@ from .welcome import build_welcome
 from .workspace import WorkspaceContext
 
 
+def _make_tool_output_callback():
+    """Return a callback that prints tool output to stdout after each tool call."""
+    def callback(name, result):
+        print(f"\n[{name} output]\n{result}")
+    return callback
+
+
 def build_agent(args):
     """Construct a MiniAgent from parsed CLI arguments."""
     workspace = WorkspaceContext.build(args.cwd)
@@ -142,6 +149,7 @@ def build_agent(args):
             allowed_ops=allowed_ops,
             sandbox=args.sandbox,
             config=config,
+            tool_output_callback=_make_tool_output_callback(),
         )
     return MiniAgent(
         model_client=model_client,
@@ -153,6 +161,7 @@ def build_agent(args):
         allowed_ops=allowed_ops,
         sandbox=args.sandbox,
         config=config,
+        tool_output_callback=_make_tool_output_callback(),
     )
 
 
@@ -238,6 +247,7 @@ def build_arg_parser():
     parser.add_argument("--max-new-tokens", type=int, default=argparse.SUPPRESS, help="Maximum model output tokens per step.")
     parser.add_argument("--temperature", type=float, default=argparse.SUPPRESS, help="Sampling temperature.")
     parser.add_argument("--top-p", type=float, default=argparse.SUPPRESS, help="Top-p nucleus sampling value.")
+    parser.add_argument("--no-welcome", action="store_true", default=False, help="Suppress the welcome banner at startup.")
     return parser
 
 
@@ -288,7 +298,8 @@ def main(argv=None):
     backend_label = args.backend
     if getattr(args, "provider", None):
         backend_label = f"{args.backend} ({args.provider})"
-    print(build_welcome(agent, model=args.model, backend=backend_label))
+    if not args.no_welcome:
+        print(build_welcome(agent, model=args.model, backend=backend_label))
 
     if args.prompt:
         prompt = " ".join(args.prompt).strip()

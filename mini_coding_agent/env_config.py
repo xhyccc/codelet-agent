@@ -184,6 +184,14 @@ def env_to_overrides(env):
         cli["max_new_tokens"] = max_tokens
         harness["max_new_tokens"] = max_tokens
 
+    tool_timeout = _coerce_int(env.get("MINI_AGENT_TOOL_TIMEOUT"))
+    if tool_timeout is not None:
+        harness["tool_timeout"] = tool_timeout
+
+    tool_max_timeout = _coerce_int(env.get("MINI_AGENT_TOOL_MAX_TIMEOUT"))
+    if tool_max_timeout is not None:
+        harness["tool_max_timeout"] = tool_max_timeout
+
     return {"cli": cli, "harness": harness}
 
 

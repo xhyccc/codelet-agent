@@ -48,7 +48,7 @@ def render_tools_block(tools):
 def render_examples_block(tools, examples_map):
     """Render the response-example block, filtered to the active tool set."""
     example_lines = [examples_map[name] for name in tools if name in examples_map]
-    example_lines.append("<final>Done.</final>")
+    example_lines.append("<final>Here are the results: [include tool output here]</final>")
     return "\n".join(example_lines)
 
 

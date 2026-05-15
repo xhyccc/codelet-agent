@@ -381,6 +381,8 @@ Important flags:
   path to a YAML file that overrides any subset of the packaged prompt/harness defaults
 - `--env-file`
   path to a `.env` file with LLM provider/key/model and harness overrides; defaults to auto-discovery of `<workspace>/.env`. See [Configuring from `.env`](#configuring-from-env).
+- `--no-welcome`
+  suppress the startup banner (useful for scripting or piped output)
 
 &nbsp;
 ## Configuration via YAML
@@ -441,6 +443,8 @@ See [EXAMPLE.md](EXAMPLE.md)
 - The agent is intentionally small and optimized for readability, not robustness.
 - Use `--allow read` to restrict the agent to read-only access to the workspace.
 - Sessions are saved automatically; use `--resume latest` to continue where you left off.
+- Tool output (`run_shell`, `run_python`) is printed to the terminal immediately after each approved call, before the model formulates its final answer.
+- Use `--no-welcome` to suppress the startup banner (handy when piping output or scripting).
 
 &nbsp;
 ## Configuring from `.env`
@@ -464,6 +468,8 @@ Supported keys:
 | `MINI_AGENT_MAX_STEPS` | Sets `harness.max_steps` (CLI default) |
 | `MINI_AGENT_MAX_NEW_TOKENS` | Sets `harness.max_new_tokens` |
 | `MINI_AGENT_OPENAI_TIMEOUT` | Sets `harness.openai_timeout` |
+| `MINI_AGENT_TOOL_TIMEOUT` | Default timeout (seconds) for `run_shell` / `run_python` tool calls; model may request less but not more than `MINI_AGENT_TOOL_MAX_TIMEOUT`; default `20` |
+| `MINI_AGENT_TOOL_MAX_TIMEOUT` | Upper clamp (seconds) on tool call timeouts the model may request; default `120` |
 | `MINI_AGENT_CMD` | Recognised by the documented launcher schema; ignored by the agent itself |
 
 Example `.env`:
@@ -475,6 +481,8 @@ LLM_MODEL=moonshot-v1-32k
 MINI_AGENT_MAX_STEPS=15
 MINI_AGENT_OPENAI_TIMEOUT=300
 MINI_AGENT_MAX_NEW_TOKENS=8192
+MINI_AGENT_TOOL_TIMEOUT=60
+MINI_AGENT_TOOL_MAX_TIMEOUT=300
 ```
 
 See [`.env.example`](.env.example) for the full template. `.env` is git-ignored by default.
