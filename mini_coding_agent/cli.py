@@ -7,7 +7,8 @@ from pathlib import Path
 
 from .agent import MiniAgent
 from .clients import OllamaModelClient, OpenAIModelClient
-from .config import discover_workspace_config, load_config
+from .config import deep_merge, discover_workspace_config, load_config
+from .env_config import discover_env_file, load_env_config, load_env_into_environ
 from .providers import LLM_PROVIDER_PRESETS, resolve_provider_preset
 from .sessions import SessionStore
 from .utils import HELP_DETAILS
@@ -20,12 +21,47 @@ def build_agent(args):
     workspace = WorkspaceContext.build(args.cwd)
     store = SessionStore(Path(workspace.repo_root) / ".mini-coding-agent" / "sessions")
 
+    # Discover and apply .env. Env-vars set by .env feed both the resolution
+    # of provider keys later in this function (via os.environ) and the
+    # ``harness`` config slice via env_to_overrides. An explicit --env-file
+    # CLI flag overrides the auto-discovered ``.env`` at the workspace root.
+    env_file = getattr(args, "env_file", None) or discover_env_file(workspace.repo_root)
+    env_dict, env_overrides = load_env_config(path=env_file)
+    if env_dict:
+        load_env_into_environ(env_dict, override=False)
+
     # Merge YAML defaults < workspace override < explicit --config.
     workspace_cfg = discover_workspace_config(workspace.repo_root)
     config = load_config(
         user_config_path=getattr(args, "config", None),
         workspace_config_path=workspace_cfg,
     )
+    # .env-driven harness overrides apply after YAML so users can pin steps /
+    # timeouts / tokens from the file. CLI flags still win (see below).
+    if env_overrides.get("harness"):
+        config = deep_merge(config, {"harness": env_overrides["harness"]})
+
+    # .env-driven CLI defaults: only fill in when the user did NOT pass the
+    # corresponding CLI flag. This preserves the documented precedence
+    # (CLI > .env > YAML > built-in defaults).
+    env_cli = env_overrides.get("cli", {})
+    if env_cli.get("provider") and not getattr(args, "provider", None):
+        args.provider = env_cli["provider"]
+    if env_cli.get("model") and not getattr(args, "model_explicit", False):
+        args.model = env_cli["model"]
+        args.model_explicit = True
+    if env_cli.get("openai_base_url") and not getattr(args, "openai_base_url_explicit", False):
+        args.openai_base_url = env_cli["openai_base_url"]
+        args.openai_base_url_explicit = True
+    if env_cli.get("openai_api_key") and not args.openai_api_key:
+        args.openai_api_key = env_cli["openai_api_key"]
+    if env_cli.get("max_steps") is not None and not getattr(args, "_max_steps_explicit", False):
+        args.max_steps = env_cli["max_steps"]
+    if env_cli.get("max_new_tokens") is not None and not getattr(args, "_max_new_tokens_explicit", False):
+        args.max_new_tokens = env_cli["max_new_tokens"]
+    if env_cli.get("openai_timeout") is not None and not getattr(args, "_openai_timeout_explicit", False):
+        args.openai_timeout = env_cli["openai_timeout"]
+
     harness_cfg = config.get("harness", {})
 
     # Apply harness defaults from config when the user did not explicitly pass
@@ -131,6 +167,19 @@ def build_arg_parser():
         "--config",
         default=None,
         help="Path to a YAML config file that overrides packaged defaults (prompts and harness settings).",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help=(
+            "Path to a .env file with LLM provider/key/model and harness "
+            "overrides. When omitted, the agent auto-discovers .env at the "
+            "workspace root. Supported keys include LLM_PROVIDER, LLM_API_KEY, "
+            "LLM_MODEL, LLM_BASE_URL, KIMI_API_KEY/MOONSHOT_API_KEY, "
+            "ZHIPU_API_KEY, SILICONFLOW_API_KEY, OPENAI_API_KEY, "
+            "MINI_AGENT_MAX_STEPS, MINI_AGENT_OPENAI_TIMEOUT, "
+            "MINI_AGENT_MAX_NEW_TOKENS."
+        ),
     )
     parser.add_argument(
         "--backend",

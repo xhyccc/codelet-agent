@@ -67,6 +67,22 @@ BUILTIN_DEFAULTS = {
             "Runtime notice{problem_suffix}. Reply with a valid <tool> call or a non-empty <final> answer.\n"
             'For multi-line files, prefer <tool name="write_file" path="file.py"><content>...</content></tool>.'
         ),
+        # System prompt used by stage-5 auto-compaction (see compaction.py).
+        "autocompact": (
+            "You are the autocompact summarizer for a coding agent. You will be given\n"
+            "the agent's running transcript (user requests, model thoughts, tool\n"
+            "calls, tool outputs). Produce a concise summary that:\n"
+            "\n"
+            "  1. PRESERVES verbatim every definitive user directive (anything the\n"
+            "     user told the agent to do or not to do).\n"
+            "  2. PRESERVES every actionable task item that is still pending.\n"
+            "  3. PRESERVES architectural notes, file paths, function names, and any\n"
+            "     concrete facts the agent has learned about the workspace.\n"
+            "  4. HIGHLY SUMMARIZES the verbose operational history (tool call noise,\n"
+            "     stack traces, search results, intermediate state).\n"
+            "\n"
+            "Return plain text. Do not invent facts; do not add tool calls."
+        ),
     },
     "harness": {
         "max_steps": 6,
@@ -81,8 +97,29 @@ BUILTIN_DEFAULTS = {
         "allowed_ops": None,
         "sandbox": "lite",
         "approval": "ask",
+        # Graduated compaction cascade settings. See
+        # :mod:`mini_coding_agent.compaction` for the full semantics.
+        "compaction": {
+            "target_chars": 12000,
+            "min_tool_output": 400,
+            "microcompact_clip": 120,
+            "preserve_recent": 4,
+            "thrash_min_relief": 0.1,
+            "mcp_tools": ["delegate"],
+            "fileread_tools": ["read_file"],
+            "auto_compaction": True,
+            "autocompact_tokens": 512,
+        },
     },
     "project_rules_files": ["AGENTS.md", ".mini-coding-agent/rules.md"],
+    # Hierarchical filesystem-backed memory (see mini_coding_agent.memory_files).
+    # Set ``enabled: false`` to disable; otherwise the agent scans well-known
+    # CLAUDE.md / AGENTS.md / .claude/rules/*.md / CLAUDE.local.md locations
+    # and appends up to ``max_files`` of them into the project-rules layer.
+    "memory_files": {
+        "enabled": True,
+        "max_files": 5,
+    },
     "sandbox": {},
 }
 

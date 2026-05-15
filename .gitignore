@@ -33,3 +33,7 @@ tmp/
 
 # OS files
 .DS_Store
+
+# Secrets / local config
+.env
+CLAUDE.local.md
