@@ -786,3 +786,131 @@ def test_delegate_propagates_sandbox_setting(tmp_path):
     answer = agent.ask("Delegate something")
     assert answer == "Parent done."
     assert agent.sandbox == "off"
+
+
+# ---------------------------------------------------------------------------
+# Compaction error-recovery tests
+# ---------------------------------------------------------------------------
+
+def test_ask_recovers_from_hard_halt_by_force_trimming(tmp_path):
+    """HardHaltError must be caught by ask(), session history trimmed, and
+    the REPL must stay usable on the next turn without raising.
+
+    Setup:
+    - Seed 10 large history items (each 2000 chars) so total > target_chars=10000.
+    - The auto_compaction model call returns a 300 000-char "summary", which is
+      larger than the original transcript → relief < 0 → HardHaltError is raised.
+    - ask() must catch it, trim the session, and return an informative string.
+    - A follow-up ask() with the now-small history must succeed normally.
+    """
+    workspace = build_workspace(tmp_path)
+    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+
+    # First model call is consumed by auto_compaction (returns huge summary).
+    # Second model call is for the follow-up ask().
+    huge_summary = "S" * 300_000
+    second_answer = "<final>Still working fine.</final>"
+
+    agent = MiniAgent(
+        model_client=FakeModelClient([huge_summary, second_answer]),
+        workspace=workspace,
+        session_store=store,
+        approval_policy="auto",
+        config={
+            "harness": {
+                "compaction": {
+                    "target_chars": 3_000,   # under context_collapse output (~4900) → triggers auto_compaction
+                    "preserve_recent": 2,
+                }
+            }
+        },
+    )
+
+    # Seed history with enough large content to exceed target_chars.
+    big = "x" * 2000
+    for i in range(5):
+        agent.session["history"].append(
+            {"role": "user", "content": big, "created_at": f"{i}a"}
+        )
+        agent.session["history"].append(
+            {"role": "assistant", "content": big, "created_at": f"{i}b"}
+        )
+
+    # First ask: cascade triggers → auto_compaction → huge summary →
+    # HardHaltError internally → caught → force-trim → informative message.
+    result = agent.ask("what is 1+1?")
+
+    assert isinstance(result, str)
+    assert not result == ""
+    # Message must mention the compaction event (not just "Done.").
+    assert any(kw in result.lower() for kw in ("context", "compacted", "trimmed", "limit"))
+
+    # History must be small after force-trim (marker + preserve_recent + new items).
+    assert len(agent.session["history"]) <= 7
+
+    # Second ask: history is now small, cascade does NOT fire, model returns normally.
+    result2 = agent.ask("now try again")
+    assert result2 == "Still working fine."
+
+
+def test_ask_hard_halt_does_not_raise_to_caller(tmp_path):
+    """ask() must never propagate HardHaltError to its caller."""
+    workspace = build_workspace(tmp_path)
+    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+
+    agent = MiniAgent(
+        model_client=FakeModelClient(["S" * 300_000]),
+        workspace=workspace,
+        session_store=store,
+        approval_policy="auto",
+        config={"harness": {"compaction": {"target_chars": 500, "preserve_recent": 1}}},
+    )
+
+    # Seed enough history to exceed target_chars.
+    for i in range(10):
+        agent.session["history"].append(
+            {"role": "user", "content": "x" * 500, "created_at": str(i)}
+        )
+
+    # Must return a string, never raise.
+    try:
+        result = agent.ask("help")
+    except Exception as exc:  # pragma: no cover
+        pytest.fail(f"ask() raised unexpectedly: {exc}")
+
+    assert isinstance(result, str)
+
+
+def test_history_text_warns_on_halted_cascade(tmp_path, capsys):
+    """When run_cascade returns halted=True (auto_compaction disabled),
+    history_text() must print a warning to stderr and not raise.
+    """
+    workspace = build_workspace(tmp_path)
+    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+
+    agent = MiniAgent(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        session_store=store,
+        approval_policy="auto",
+        config={
+            "harness": {
+                "compaction": {
+                    "target_chars": 10,        # absurdly small → always halted
+                    "preserve_recent": 1,
+                    "auto_compaction": False,  # disable so halted=True is returned
+                }
+            }
+        },
+    )
+
+    # Seed history to trigger the cascade.
+    for i in range(5):
+        agent.session["history"].append(
+            {"role": "user", "content": "x" * 200, "created_at": str(i)}
+        )
+
+    agent.ask("do something")
+
+    captured = capsys.readouterr()
+    assert "warning" in captured.err.lower()

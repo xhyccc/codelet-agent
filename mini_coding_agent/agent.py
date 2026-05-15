@@ -8,6 +8,7 @@ retry-notice text) now flow in via the YAML-backed config object.
 """
 
 import json
+import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -174,6 +175,12 @@ class MiniAgent:
                 autocompact_tokens=compaction_cfg.get("autocompact_tokens", 512),
                 autocompact_prompt=(self.config.get("prompts") or {}).get("autocompact"),
             )
+            if outcome.get("halted"):
+                print(
+                    "[warning] compaction cascade could not bring transcript under target; "
+                    "continuing with over-budget history",
+                    file=sys.stderr,
+                )
             history = outcome["history"]
             current_budget = outcome["budget"]
             self.last_compaction_stages = outcome["stages_applied"]
@@ -219,7 +226,13 @@ class MiniAgent:
 
         while tool_steps < self.max_steps and attempts < max_attempts:
             attempts += 1
-            raw = self.model_client.complete(self.prompt(user_message), self.max_new_tokens)
+            try:
+                prompt = self.prompt(user_message)
+            except compaction_module.HardHaltError:
+                final = self._force_compact_history()
+                self.record({"role": "assistant", "content": final, "created_at": now()})
+                return final
+            raw = self.model_client.complete(prompt, self.max_new_tokens)
             kind, payload = parsing.parse_model_output(raw, retry_template)
 
             if kind == "tool":
@@ -256,6 +269,39 @@ class MiniAgent:
             final = "Stopped after reaching the step limit without a final answer."
         self.record({"role": "assistant", "content": final, "created_at": now()})
         return final
+
+    # ---- compaction helpers --------------------------------------------
+
+    def _force_compact_history(self):
+        """Trim the durable session history to the most recent items.
+
+        Called when the compaction cascade raises ``HardHaltError`` (i.e. the
+        transcript is so large that even auto-compaction cannot recover it).
+        We surgically truncate ``self.session["history"]`` in place so that
+        the interactive REPL stays usable on the very next user turn.
+        """
+        cfg = self.config.get("harness", {}).get("compaction") or {}
+        preserve = cfg.get(
+            "preserve_recent",
+            compaction_module.DEFAULT_COMPACTION["preserve_recent"],
+        )
+        history = self.session["history"]
+        cutoff = max(0, len(history) - preserve)
+        self.session["history"] = [
+            {
+                "role": "assistant",
+                "content": "[session history force-compacted: earlier history trimmed to free context]",
+                "compacted": True,
+                "created_at": now(),
+            },
+            *history[cutoff:],
+        ]
+        self.session_path = self.session_store.save(self.session)
+        return (
+            f"Context limit reached and auto-compaction could not recover the transcript. "
+            f"Session history has been trimmed to the {preserve} most recent items. "
+            f"Please repeat your last request."
+        )
 
     # ---- tool dispatch --------------------------------------------------
 

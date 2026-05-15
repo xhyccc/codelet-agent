@@ -141,7 +141,7 @@ harness:
     mcp_tools: [delegate]
     fileread_tools: [read_file]
     auto_compaction: true
-    autocompact_tokens: 512
+    autocompact_tokens: 2048
 
 # Workspace files that should be auto-loaded into the <project-rules> layer.
 project_rules_files:

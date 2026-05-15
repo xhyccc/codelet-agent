@@ -41,6 +41,7 @@ BUILTIN_DEFAULTS = {
             "New files should be complete and runnable, including obvious imports.",
             "Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.",
             "Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, run_python, or delegate with args={}.",
+            'After running a tool, always include the relevant output in your <final> answer. Never respond with just "Done." if there is actual output to show.',
         ],
         "examples": {
             "list_files": '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
@@ -108,7 +109,7 @@ BUILTIN_DEFAULTS = {
             "mcp_tools": ["delegate"],
             "fileread_tools": ["read_file"],
             "auto_compaction": True,
-            "autocompact_tokens": 512,
+            "autocompact_tokens": 2048,
         },
     },
     "project_rules_files": ["AGENTS.md", ".mini-coding-agent/rules.md"],
