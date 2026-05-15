@@ -22,8 +22,26 @@ Module map:
 """
 
 from .agent import MiniAgent
+from .baseline import (
+    capture_baseline,
+    diff_baseline,
+    verify_session_baseline,
+)
 from .cli import build_agent, build_arg_parser, main, _post_process_args
 from .clients import FakeModelClient, OllamaModelClient, OpenAIModelClient
+from .compaction import (
+    AUTOCOMPACT_SYSTEM_PROMPT,
+    DEFAULT_COMPACTION,
+    HardHaltError,
+    auto_compaction,
+    budget_reduction,
+    build_autocompact_prompt,
+    context_collapse,
+    microcompaction,
+    render_history_size,
+    run_cascade,
+    snipping,
+)
 from .config import (
     BUILTIN_DEFAULTS,
     deep_merge,
@@ -31,6 +49,21 @@ from .config import (
     load_config,
     load_packaged_defaults,
     load_project_rules,
+)
+from .env_config import (
+    discover_env_file,
+    env_to_overrides,
+    load_env_config,
+    load_env_into_environ,
+    parse_env_file,
+    resolve_api_key,
+)
+from .memory_files import (
+    DEFAULT_MAX_FILES,
+    LAYER_WEIGHTS,
+    discover_memory_files,
+    render_memory_files,
+    select_memory_files,
 )
 from .parsing import (
     extract,
@@ -82,12 +115,17 @@ from .workspace import WorkspaceContext
 
 __all__ = [
     "ALL_TOOL_OPS",
+    "AUTOCOMPACT_SYSTEM_PROMPT",
     "BUILTIN_DEFAULTS",
+    "DEFAULT_COMPACTION",
+    "DEFAULT_MAX_FILES",
     "DOC_NAMES",
     "FakeModelClient",
     "HELP_DETAILS",
     "HELP_TEXT",
+    "HardHaltError",
     "IGNORED_PATH_NAMES",
+    "LAYER_WEIGHTS",
     "LLM_PROVIDER_PRESETS",
     "MAX_HISTORY",
     "MAX_TOOL_OUTPUT",
@@ -103,31 +141,51 @@ __all__ = [
     "WELCOME_ART",
     "WorkspaceContext",
     "_post_process_args",
+    "auto_compaction",
+    "budget_reduction",
     "build_agent",
     "build_arg_parser",
+    "build_autocompact_prompt",
     "build_history_text",
     "build_memory_text",
     "build_prefix",
     "build_prompt",
     "build_welcome",
+    "capture_baseline",
     "clip",
+    "context_collapse",
     "deep_merge",
+    "diff_baseline",
+    "discover_env_file",
+    "discover_memory_files",
     "discover_workspace_config",
+    "env_to_overrides",
     "extract",
     "extract_raw",
     "load_config",
+    "load_env_config",
+    "load_env_into_environ",
     "load_packaged_defaults",
     "load_project_rules",
     "main",
+    "microcompaction",
     "middle",
     "now",
     "parse_attrs",
+    "parse_env_file",
     "parse_model_output",
     "parse_xml_tool",
+    "render_history_size",
+    "render_memory_files",
+    "resolve_api_key",
     "resolve_provider_preset",
     "retry_notice",
+    "run_cascade",
     "sandbox_check_python",
     "sandbox_check_shell",
     "sandbox_filter_env",
     "sandbox_preexec",
+    "select_memory_files",
+    "snipping",
+    "verify_session_baseline",
 ]

@@ -14,6 +14,10 @@ It is a minimal local agent loop with:
 - approval handling for risky tools
 - transcript and memory persistence
 - bounded delegation
+- **graduated compaction cascade** for context-window pressure
+- **hierarchical filesystem memory** (`CLAUDE.md` / `AGENTS.md` / `.claude/rules/`)
+- **session-baseline verification** to detect repo drift across runs
+- **`.env`-based configuration** for provider, key, model, and harness knobs
 
 The agent supports two model backends: **Ollama** (default, local) and any **OpenAI-compatible API**. The OpenAI backend ships with convenience presets for popular custom LLM providers (**Kimi/Moonshot**, **GLM/Zhipu**, **SiliconFlow**, **DeepSeek**, **OpenRouter**, **Together**, **DashScope**, ...) so you can pick one with a single `--provider` flag.
 
@@ -375,6 +379,8 @@ Important flags:
   controls nucleus sampling for generation; default: `0.9`
 - `--config`
   path to a YAML file that overrides any subset of the packaged prompt/harness defaults
+- `--env-file`
+  path to a `.env` file with LLM provider/key/model and harness overrides; defaults to auto-discovery of `<workspace>/.env`. See [Configuring from `.env`](#configuring-from-env).
 
 &nbsp;
 ## Configuration via YAML
@@ -435,3 +441,116 @@ See [EXAMPLE.md](EXAMPLE.md)
 - The agent is intentionally small and optimized for readability, not robustness.
 - Use `--allow read` to restrict the agent to read-only access to the workspace.
 - Sessions are saved automatically; use `--resume latest` to continue where you left off.
+
+&nbsp;
+## Configuring from `.env`
+
+The CLI auto-discovers a `.env` file at the workspace root (override the location with `--env-file PATH`). Values from `.env` populate the LLM provider, key, model, base URL, and a small set of harness knobs.
+
+Resolution order is: **CLI flags > `.env` > workspace `.mini-coding-agent/config.yaml` > packaged YAML defaults**. `.env` values are also exported into `os.environ` (non-clobbering by default) so existing API-key resolution logic continues to work.
+
+Supported keys:
+
+| Key | Effect |
+|---|---|
+| `LLM_PROVIDER` | Same vocabulary as `--provider`: `kimi`, `moonshot`, `zhipu`/`glm`, `siliconflow`, `deepseek`, `openrouter`, `together`, `dashscope`, `openai`, `custom` |
+| `LLM_API_KEY` | Generic API key; takes precedence over all provider-specific keys below |
+| `LLM_MODEL` | Same as `--model` |
+| `LLM_BASE_URL` | Same as `--openai-base-url` (required for `custom`) |
+| `KIMI_API_KEY` / `MOONSHOT_API_KEY` | Aliases for the Moonshot/Kimi key |
+| `ZHIPU_API_KEY` | Zhipu / GLM |
+| `SILICONFLOW_API_KEY` | SiliconFlow |
+| `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `TOGETHER_API_KEY`, `DASHSCOPE_API_KEY`, `OPENAI_API_KEY` | Provider-specific fallbacks |
+| `MINI_AGENT_MAX_STEPS` | Sets `harness.max_steps` (CLI default) |
+| `MINI_AGENT_MAX_NEW_TOKENS` | Sets `harness.max_new_tokens` |
+| `MINI_AGENT_OPENAI_TIMEOUT` | Sets `harness.openai_timeout` |
+| `MINI_AGENT_CMD` | Recognised by the documented launcher schema; ignored by the agent itself |
+
+Example `.env`:
+
+```bash
+LLM_PROVIDER=kimi
+KIMI_API_KEY=sk-xxxxxxxxxxxxxxxx
+LLM_MODEL=moonshot-v1-32k
+MINI_AGENT_MAX_STEPS=15
+MINI_AGENT_OPENAI_TIMEOUT=300
+MINI_AGENT_MAX_NEW_TOKENS=8192
+```
+
+See [`.env.example`](.env.example) for the full template. `.env` is git-ignored by default.
+
+&nbsp;
+## Context Management & Compaction
+
+When the transcript would otherwise overflow the model's context window, the agent runs a **graduated compaction cascade** rather than simply dropping old messages (which severely degrades reasoning). The cascade is implemented in [`mini_coding_agent/compaction.py`](mini_coding_agent/compaction.py).
+
+Five stages run in order; the cascade stops at the first stage that brings the rendered transcript under `harness.compaction.target_chars`:
+
+1. **Budget reduction** — dynamically trim `max_tool_output` to create a soft ceiling against context flooding.
+2. **Snipping** — mathematically excise high-volume, low-value strings (Python tracebacks, banner-style shell noise) from older items.
+3. **Microcompaction** — clear intermediate outputs from iterative tool calls. **MCP outputs are preserved verbatim** (schema stability) and **`FileRead` results skip budgeting entirely** so the model retains full visibility of critical code.
+4. **Context collapse** — read-time projection that flattens older history non-destructively (one-line role/name summary per item).
+5. **Auto-compaction** — secondary LLM call with the `autocompact` system prompt. Explicitly preserves definitive user directives, actionable task items, and architectural notes while highly summarizing the verbose operational history.
+
+If a single execution loop refills the context immediately after auto-compaction (token thrashing), a **`HardHaltError`** is raised and surfaced to the user instead of looping forever.
+
+Tune the cascade under `harness.compaction` in YAML or in your override config:
+
+```yaml
+harness:
+  compaction:
+    target_chars: 12000       # soft ceiling on the rendered transcript
+    min_tool_output: 400      # floor for the dynamic tool-output budget
+    microcompact_clip: 120    # per-item clip during stage 3
+    preserve_recent: 4        # tail always kept verbatim
+    thrash_min_relief: 0.1    # raise HardHaltError if relief < 10%
+    mcp_tools: [delegate]     # preserved verbatim
+    fileread_tools: [read_file]  # skipped from budgeting
+    auto_compaction: true
+    autocompact_tokens: 512
+```
+
+The durable on-disk transcript (`.mini-coding-agent/sessions/*.json`) is **never** mutated by compaction — only the prompt-rendered view is. Resuming a session keeps full fidelity.
+
+&nbsp;
+## Hierarchical Filesystem Memory
+
+The agent treats context windows as finite, volatile, and quickly degrading. Instead of using a vector database, it offloads cognitive burden onto **markdown protocol files** at well-known paths, governed by a multi-level memory structure:
+
+| Layer | Paths (in resolution order) | Purpose |
+|---|---|---|
+| **global** | `/etc/mini-coding-agent/CLAUDE.md` and any `*.md` in `/etc/mini-coding-agent/` | System-wide defaults |
+| **user**   | `~/.claude/`, `~/.mini-coding-agent/` (`*.md`) | User preferences |
+| **project**| `<repo>/.claude/rules/*.md`, `<repo>/.mini-coding-agent/rules.md`, `<repo>/AGENTS.md`, `<repo>/CLAUDE.md` | Project-specific architectural records |
+| **local**  | `<repo>/CLAUDE.local.md` | Git-ignored workspace notes |
+
+The agent does an **LLM-friendly header-based scan** (no vector embeddings) of each candidate, scores them against the active task description, and includes up to `memory_files.max_files` (default **5**) in the `<project-rules>` layer. Layer precedence (`local > project > user > global`) breaks ties.
+
+Configure under `memory_files`:
+
+```yaml
+memory_files:
+  enabled: true
+  max_files: 5
+  # Optional path overrides; see mini_coding_agent.memory_files for defaults:
+  # global_roots: [/etc/mini-coding-agent]
+  # user_roots:   [~/.claude, ~/.mini-coding-agent]
+  # project_paths: [.claude/rules, .mini-coding-agent/rules.md, AGENTS.md, CLAUDE.md]
+  # local_paths:   [CLAUDE.local.md]
+```
+
+`CLAUDE.local.md` is git-ignored by default so it never leaks into commits.
+
+&nbsp;
+## Session Baselines
+
+Every agent session begins with a **verification baseline check** against the physical repository state to prevent compounding hallucinations and architectural drift across multiple, disjointed agent runs. The baseline records:
+
+- workspace root
+- current branch and `HEAD` commit
+- short digest of `git status --porcelain`
+- size + truncated sha256 of each watched memory file
+
+The baseline is persisted into the session JSON. On the next session, `MiniAgent.baseline_drift` exposes a human-readable list of differences (`"HEAD moved: aaaa -> bbbb"`, `"file changed on disk: AGENTS.md"`, ...). Workspace rules in `CLAUDE.md` / `AGENTS.md` guarantee probabilistic compliance better than any external retrieval system would.
+
+See [`mini_coding_agent/baseline.py`](mini_coding_agent/baseline.py) for the API.

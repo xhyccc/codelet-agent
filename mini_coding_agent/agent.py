@@ -12,6 +12,9 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from . import baseline as baseline_module
+from . import compaction as compaction_module
+from . import memory_files as memory_files_module
 from .config import BUILTIN_DEFAULTS, deep_merge, load_project_rules
 from . import parsing
 from .prompt import (
@@ -72,7 +75,17 @@ class MiniAgent:
             "workspace_root": workspace.repo_root,
             "history": [],
             "memory": {"task": "", "files": [], "notes": []},
+            "baseline": None,
         }
+
+        # Session-baseline verification: every session begins with a check
+        # against the physical repository state to prevent compounding
+        # hallucinations across disjointed runs.
+        self.baseline_drift = baseline_module.verify_session_baseline(
+            self.session,
+            self.workspace.repo_root,
+            watch_files=self.config.get("project_rules_files") or [],
+        )
 
         # Build the per-agent tool registry and stable prompt prefix.
         self.registry = ToolRegistry(self)
@@ -83,6 +96,26 @@ class MiniAgent:
             self.workspace.repo_root,
             self.config.get("project_rules_files") or [],
         )
+        # Header-based memory retrieval: pick up to N hierarchical memory
+        # files (CLAUDE.md / AGENTS.md / .claude/rules/*.md / CLAUDE.local.md)
+        # and append them to the project-rules layer.
+        memory_cfg = self.config.get("memory_files") or {}
+        if memory_cfg.get("enabled", True):
+            selected = memory_files_module.select_memory_files(
+                self.workspace.repo_root,
+                query=self.session["memory"].get("task", ""),
+                max_files=memory_cfg.get("max_files", memory_files_module.DEFAULT_MAX_FILES),
+                global_roots=memory_cfg.get("global_roots"),
+                user_roots=memory_cfg.get("user_roots"),
+                project_paths=memory_cfg.get("project_paths"),
+                local_paths=memory_cfg.get("local_paths"),
+            )
+            self.memory_files = selected
+            extra = memory_files_module.render_memory_files(selected)
+            if extra:
+                project_rules_text = (project_rules_text + "\n\n" + extra).strip()
+        else:
+            self.memory_files = []
         self.prefix = build_prefix(
             self.config.get("prompts", {}),
             self.tools,
@@ -118,9 +151,35 @@ class MiniAgent:
 
     def history_text(self):
         harness = self.config.get("harness", {})
+        compaction_cfg = harness.get("compaction") or {}
+        # Run the graduated compaction cascade over a copy of the history
+        # whenever its rendered size exceeds the soft target. The agent never
+        # mutates ``self.session["history"]`` here; the durable transcript
+        # remains intact so resuming a session keeps full fidelity.
+        target_chars = compaction_cfg.get(
+            "target_chars",
+            compaction_module.DEFAULT_COMPACTION["target_chars"],
+        )
+        history = self.session["history"]
+        rendered_size = compaction_module.render_history_size(history)
+        current_budget = harness.get("max_tool_output", 4000)
+        if rendered_size > target_chars:
+            outcome = compaction_module.run_cascade(
+                history,
+                current_budget=current_budget,
+                config=compaction_cfg,
+                model_client=self.model_client if compaction_cfg.get("auto_compaction", True) else None,
+                autocompact_tokens=compaction_cfg.get("autocompact_tokens", 512),
+                autocompact_prompt=(self.config.get("prompts") or {}).get("autocompact"),
+            )
+            history = outcome["history"]
+            current_budget = outcome["budget"]
+            self.last_compaction_stages = outcome["stages_applied"]
+        else:
+            self.last_compaction_stages = []
         return build_history_text(
-            self.session["history"],
-            max_tool_output=harness.get("max_tool_output", 4000),
+            history,
+            max_tool_output=current_budget,
             max_history=harness.get("max_history", 12000),
         )
 
