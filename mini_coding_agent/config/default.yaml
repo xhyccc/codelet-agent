@@ -1,0 +1,111 @@
+# Default configuration for Mini-Coding-Agent.
+#
+# This file is the single source of truth for all prompts and harness
+# settings. You can override any subset of it by passing
+# ``--config path/to/your.yaml`` on the CLI, or by dropping a
+# ``.mini-coding-agent/config.yaml`` file at the root of your workspace
+# (auto-discovered).
+#
+# Prompts follow a six-layer architecture inspired by Claude Code's harness:
+#   1. system_defaults - immutable base rules, tool syntax, security policy
+#   2. agent_identity  - who the agent is and how it should behave
+#   3. project_rules   - per-repo overrides (also pulled from AGENTS.md if present)
+#   4. coordinator     - delegation/swarm guidance (when sub-agents are available)
+#   5. override        - volatile session overrides
+#   6. append          - dynamic situational data (workspace, memory, transcript, request)
+#
+# Layers 1-4 are stable across turns and therefore live at the top of the
+# prompt so they can be reused by KV caches. Layer 6 holds everything that
+# changes turn-to-turn and lives at the bottom.
+
+prompts:
+  # Layer 2: agent identity. Kept terse so it is always at the top.
+  agent_identity: |
+    You are Mini-Coding-Agent, a small, careful coding agent. You operate inside
+    a real user workspace and complete tasks by calling structured tools. You
+    plan briefly, take small steps, and prefer reading before writing.
+
+  # Layer 1: system_defaults - rules, tool syntax, response format.
+  rules:
+    - Use tools instead of guessing about the workspace.
+    - Return exactly one <tool>...</tool> or one <final>...</final>.
+    - 'Tool calls must look like: <tool>{"name":"tool_name","args":{...}}</tool>'
+    - 'For write_file and patch_file with multi-line text, prefer XML style: <tool name="write_file" path="file.py"><content>...</content></tool>'
+    - 'Final answers must look like: <final>your answer</final>'
+    - Never invent tool results.
+    - Keep answers concise and concrete.
+    - If the user asks you to create or update a specific file and the path is clear, use write_file or patch_file instead of repeatedly listing files.
+    - Before writing tests for existing code, read the implementation first.
+    - When writing tests, match the current implementation unless the user explicitly asked you to change the code.
+    - New files should be complete and runnable, including obvious imports.
+    - Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.
+    - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, run_python, or delegate with args={}.
+
+  # Per-tool example payloads. Used both to show the model valid syntax and to
+  # surface a hint when validate_tool rejects bad arguments.
+  examples:
+    list_files: '<tool>{"name":"list_files","args":{"path":"."}}</tool>'
+    read_file: '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>'
+    search: '<tool>{"name":"search","args":{"pattern":"binary_search","path":"."}}</tool>'
+    glob: '<tool>{"name":"glob","args":{"pattern":"**/*.py"}}</tool>'
+    write_file: '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>'
+    patch_file: '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>'
+    run_shell: '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>'
+    run_python: '<tool>{"name":"run_python","args":{"code":"import sys; print(sys.version)","timeout":20}}</tool>'
+    delegate: '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>'
+
+  # Layer 3: project rules. The string here is appended *after* any rules
+  # auto-discovered from AGENTS.md / .mini-coding-agent/rules.md in the workspace.
+  project_rules: ""
+
+  # Layer 4: coordinator. Only emitted when the active agent can delegate.
+  coordinator: |
+    You may delegate scoped sub-tasks to a read-only child agent via the
+    `delegate` tool when:
+      - the sub-task is well-defined and read-only,
+      - the parent transcript is long enough that focused inspection would help,
+      - or the user explicitly asks for a separate investigation.
+    Always include the result of the child in your final answer.
+
+  # Layer 5: volatile session overrides. Empty by default; configs and the CLI
+  # can fill this in (e.g. "tone: terse", "always run tests after writing code").
+  override: ""
+
+  # Retry notice template, used when the model returns malformed output.
+  retry_notice: |
+    Runtime notice{problem_suffix}. Reply with a valid <tool> call or a non-empty <final> answer.
+    For multi-line files, prefer <tool name="write_file" path="file.py"><content>...</content></tool>.
+
+harness:
+  # Per-step iteration and token budgets.
+  max_steps: 6
+  max_new_tokens: 512
+  max_depth: 1            # delegation depth
+  # Context-reduction budgets.
+  max_tool_output: 4000
+  max_history: 12000
+  # Default sampling. These are the values the CLI uses when no --temperature
+  # / --top-p flag is given.
+  temperature: 0.2
+  top_p: 0.9
+  # Default request timeouts (seconds).
+  ollama_timeout: 300
+  openai_timeout: 60
+  # Default tool category allowlist. ``null`` means "all".
+  allowed_ops: null
+  # "lite" enables conservative pattern denylists plus POSIX rlimits and a
+  # filtered subprocess environment. "off" disables all of the above.
+  sandbox: lite
+  # Default approval policy when running interactively. The CLI overrides this
+  # to "auto" when a one-shot prompt is supplied.
+  approval: ask
+
+# Workspace files that should be auto-loaded into the <project-rules> layer.
+project_rules_files:
+  - AGENTS.md
+  - .mini-coding-agent/rules.md
+
+# Sandbox policy. See mini_coding_agent.sandbox for the field semantics.
+# Override these to relax or tighten what risky tools may do. Keys are
+# optional; omit a key to keep the built-in defaults.
+sandbox: {}
