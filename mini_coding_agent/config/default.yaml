@@ -6,17 +6,23 @@
 # ``.mini-coding-agent/config.yaml`` file at the root of your workspace
 # (auto-discovered).
 #
-# Prompts follow a six-layer architecture inspired by Claude Code's harness:
-#   1. system_defaults - immutable base rules, tool syntax, security policy
-#   2. agent_identity  - who the agent is and how it should behave
-#   3. project_rules   - per-repo overrides (also pulled from AGENTS.md if present)
-#   4. coordinator     - delegation/swarm guidance (when sub-agents are available)
-#   5. override        - volatile session overrides
-#   6. append          - dynamic situational data (workspace, memory, transcript, request)
+# Prompts follow a six-layer architecture inspired by Claude Code's harness.
+# Layers are ordered top -> bottom from most stable (cacheable) to most
+# volatile so KV caches can reuse the prefix across turns:
 #
-# Layers 1-4 are stable across turns and therefore live at the top of the
-# prompt so they can be reused by KV caches. Layer 6 holds everything that
-# changes turn-to-turn and lives at the bottom.
+#   <agent-identity>   - who the agent is.
+#   <system-defaults>  - immutable rules, tool syntax, security policy.
+#   <project-rules>    - per-repo overrides (also pulled from AGENTS.md).
+#   <coordinator>      - delegation/swarm guidance (only when delegation is enabled).
+#   <override>         - volatile session overrides.
+#   <workspace>        - workspace snapshot (cwd, branch, status, project docs).
+#
+# Then per-turn volatile state is appended in <memory>, <transcript>, and
+# <request> tags.
+#
+# <project-rules>, <coordinator>, and <override> are emitted only when they
+# have content; <agent-identity>, <system-defaults>, and <workspace> are
+# always present.
 
 prompts:
   # Layer 2: agent identity. Kept terse so it is always at the top.

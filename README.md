@@ -392,14 +392,14 @@ PyYAML is an optional dependency. Install with `pip install pyyaml` (or `pip ins
 
 ### Prompt architecture
 
-The prompt is assembled in six XML-tagged layers ordered from most stable (top, cacheable) to most volatile (bottom):
+The prompt is assembled in up to six XML-tagged layers ordered from most stable (top, cacheable) to most volatile (bottom):
 
-1. `<agent-identity>` — who the agent is.
-2. `<system-defaults>` — immutable rules, tool catalog, response examples.
-3. `<project-rules>` — per-repo overrides (`AGENTS.md`, `.mini-coding-agent/rules.md`).
-4. `<coordinator>` — delegation/swarm guidance (emitted only when delegation is enabled).
-5. `<override>` — volatile session overrides from YAML config or CLI.
-6. `<workspace>` — workspace snapshot (cwd, branch, status, docs).
+1. `<agent-identity>` — who the agent is. **Always present.**
+2. `<system-defaults>` — immutable rules, tool catalog, response examples. **Always present.**
+3. `<project-rules>` — per-repo overrides (`AGENTS.md`, `.mini-coding-agent/rules.md`). Emitted only when content is found.
+4. `<coordinator>` — delegation/swarm guidance. Emitted only when delegation is enabled.
+5. `<override>` — volatile session overrides from YAML config or CLI. Emitted only when configured.
+6. `<workspace>` — workspace snapshot (cwd, branch, status, docs). **Always present.**
 
 Then per-turn volatile state is appended in `<memory>`, `<transcript>`, `<request>` tags. This shape mirrors the "Immutable Prompt Principle" so KV caches can be reused across turns.
 
