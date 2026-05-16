@@ -37,7 +37,7 @@ def build_welcome(agent, model, host=None, *, backend="ollama"):
     rows = [center(text) for text in WELCOME_ART]
     rows.extend(
         [
-            center("MINI CODING AGENT"),
+            center("Codelet (derived from Mini Code Agent), mieu~"),
             divider("-"),
             row(""),
             row("WORKSPACE  " + middle(agent.workspace.cwd, inner - 11)),

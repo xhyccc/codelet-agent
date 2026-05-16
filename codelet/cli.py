@@ -335,7 +335,7 @@ def main(argv=None):
 
     while True:
         try:
-            user_input = input("\nmini-coding-agent> ").strip()
+            user_input = input("\ncodelet> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("")
             return 0

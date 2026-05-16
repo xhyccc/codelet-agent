@@ -251,7 +251,7 @@ def test_welcome_screen_keeps_box_shape_for_long_paths(tmp_path):
     assert "..." in welcome
     assert "O   O" in welcome
     assert "MINI-CODING-AGENT" not in welcome
-    assert "MINI CODING AGENT" in welcome
+    assert "Codelet (derived from Mini Code Agent), mieu~" in welcome
     assert "// READY" not in welcome
     assert "SLASH" not in welcome
     assert "READY      " not in welcome
