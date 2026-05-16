@@ -2,7 +2,7 @@
 
 import pytest
 
-from mini_coding_agent import (
+from codelet import (
     FakeModelClient,
     MiniAgent,
     SessionStore,
@@ -82,7 +82,7 @@ def test_glob_rejects_path_escape(tmp_path):
 
 def test_module_layout_exposes_submodules():
     """Smoke-test the public submodule layout."""
-    from mini_coding_agent import (
+    from codelet import (
         agent as agent_mod,
         cli as cli_mod,
         clients,
@@ -99,7 +99,7 @@ def test_module_layout_exposes_submodules():
     )
 
     # Sanity: every module must define at least one of the symbols re-exported
-    # by mini_coding_agent.__init__.
+    # by codelet.__init__.
     assert hasattr(agent_mod, "MiniAgent")
     assert hasattr(cli_mod, "main")
     assert hasattr(clients, "OllamaModelClient")
@@ -117,7 +117,7 @@ def test_module_layout_exposes_submodules():
 
 def test_public_api_remains_importable_from_package_root():
     """Pre-refactor imports must still work for backward compatibility."""
-    from mini_coding_agent import (  # noqa: F401
+    from codelet import (  # noqa: F401
         ALL_TOOL_OPS,
         BUILTIN_DEFAULTS,
         FakeModelClient,
@@ -143,7 +143,7 @@ def test_public_api_remains_importable_from_package_root():
 
 
 def test_config_flag_in_cli_parser(tmp_path):
-    from mini_coding_agent import _post_process_args, build_arg_parser
+    from codelet import _post_process_args, build_arg_parser
 
     parser = build_arg_parser()
     args = parser.parse_args(["--config", str(tmp_path / "custom.yaml"), "--cwd", str(tmp_path)])
@@ -162,8 +162,8 @@ def test_workspace_yaml_config_picked_up_by_cli(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    from mini_coding_agent import _post_process_args, build_arg_parser
-    from mini_coding_agent import build_agent as cli_build_agent
+    from codelet import _post_process_args, build_arg_parser
+    from codelet import build_agent as cli_build_agent
 
     parser = build_arg_parser()
     args = parser.parse_args(["--cwd", str(tmp_path)])
@@ -188,8 +188,8 @@ def test_user_config_flag_overrides_workspace_yaml(tmp_path, monkeypatch):
     user_yaml = tmp_path / "user.yaml"
     user_yaml.write_text("harness:\n  max_steps: 88\n", encoding="utf-8")
 
-    from mini_coding_agent import _post_process_args, build_arg_parser
-    from mini_coding_agent import build_agent as cli_build_agent
+    from codelet import _post_process_args, build_arg_parser
+    from codelet import build_agent as cli_build_agent
 
     parser = build_arg_parser()
     args = parser.parse_args(["--cwd", str(tmp_path), "--config", str(user_yaml)])

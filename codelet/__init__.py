@@ -1,24 +1,24 @@
 """Mini-Coding-Agent: a small, configurable coding agent.
 
-This package replaces the original single-file ``mini_coding_agent.py``. The
-public API (everything historically importable from ``mini_coding_agent``) is
+This package replaces the original single-file ``codelet.py``. The
+public API (everything historically importable from ``codelet``) is
 re-exported here so existing scripts and tests keep working unchanged.
 
 Module map:
 
-* :mod:`mini_coding_agent.utils`     - small helpers and constants.
-* :mod:`mini_coding_agent.sandbox`   - sandboxing policy for risky tools.
-* :mod:`mini_coding_agent.providers` - OpenAI-compatible provider presets.
-* :mod:`mini_coding_agent.clients`   - model client implementations.
-* :mod:`mini_coding_agent.parsing`   - parsing of model output.
-* :mod:`mini_coding_agent.workspace` - WorkspaceContext snapshot.
-* :mod:`mini_coding_agent.sessions`  - SessionStore on-disk persistence.
-* :mod:`mini_coding_agent.tools`     - tool registry + implementations.
-* :mod:`mini_coding_agent.prompt`    - six-layer XML prompt assembly.
-* :mod:`mini_coding_agent.config`    - YAML-backed configuration loader.
-* :mod:`mini_coding_agent.agent`     - the MiniAgent orchestrator.
-* :mod:`mini_coding_agent.welcome`   - ASCII welcome banner.
-* :mod:`mini_coding_agent.cli`       - argparse CLI and ``main`` entry point.
+* :mod:`codelet.utils`     - small helpers and constants.
+* :mod:`codelet.sandbox`   - sandboxing policy for risky tools.
+* :mod:`codelet.providers` - OpenAI-compatible provider presets.
+* :mod:`codelet.clients`   - model client implementations.
+* :mod:`codelet.parsing`   - parsing of model output.
+* :mod:`codelet.workspace` - WorkspaceContext snapshot.
+* :mod:`codelet.sessions`  - SessionStore on-disk persistence.
+* :mod:`codelet.tools`     - tool registry + implementations.
+* :mod:`codelet.prompt`    - six-layer XML prompt assembly.
+* :mod:`codelet.config`    - YAML-backed configuration loader.
+* :mod:`codelet.agent`     - the MiniAgent orchestrator.
+* :mod:`codelet.welcome`   - ASCII welcome banner.
+* :mod:`codelet.cli`       - argparse CLI and ``main`` entry point.
 """
 
 from .agent import MiniAgent

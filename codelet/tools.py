@@ -2,7 +2,7 @@
 
 The :class:`ToolRegistry` builds the dictionary of available tools based on the
 agent's permissions (``allowed_ops``) and delegation budget. Each tool is a
-small Python callable bound to a host :class:`~mini_coding_agent.agent.MiniAgent`
+small Python callable bound to a host :class:`~codelet.agent.MiniAgent`
 so it can access the workspace and sandbox configuration.
 """
 

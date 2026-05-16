@@ -99,7 +99,7 @@ BUILTIN_DEFAULTS = {
         "sandbox": "lite",
         "approval": "ask",
         # Graduated compaction cascade settings. See
-        # :mod:`mini_coding_agent.compaction` for the full semantics.
+        # :mod:`codelet.compaction` for the full semantics.
         "compaction": {
             "target_chars": 12000,
             "min_tool_output": 400,
@@ -113,7 +113,7 @@ BUILTIN_DEFAULTS = {
         },
     },
     "project_rules_files": ["AGENTS.md", ".mini-coding-agent/rules.md"],
-    # Hierarchical filesystem-backed memory (see mini_coding_agent.memory_files).
+    # Hierarchical filesystem-backed memory (see codelet.memory_files).
     # Set ``enabled: false`` to disable; otherwise the agent scans well-known
     # CLAUDE.md / AGENTS.md / .claude/rules/*.md / CLAUDE.local.md locations
     # and appends up to ``max_files`` of them into the project-rules layer.

@@ -83,7 +83,7 @@ prompts:
     Runtime notice{problem_suffix}. Reply with a valid <tool> call or a non-empty <final> answer.
     For multi-line files, prefer <tool name="write_file" path="file.py"><content>...</content></tool>.
 
-  # Stage-5 auto-compaction system prompt. See mini_coding_agent.compaction.
+  # Stage-5 auto-compaction system prompt. See codelet.compaction.
   autocompact: |
     You are the autocompact summarizer for a coding agent. You will be given
     the agent's running transcript (user requests, model thoughts, tool
@@ -126,7 +126,7 @@ harness:
   # Default approval policy when running interactively. The CLI overrides this
   # to "auto" when a one-shot prompt is supplied.
   approval: ask
-  # Graduated compaction cascade. See mini_coding_agent.compaction for
+  # Graduated compaction cascade. See codelet.compaction for
   # full semantics. Stages run in order until the rendered transcript drops
   # below ``target_chars``: budget_reduction -> snipping -> microcompaction
   # -> context_collapse -> auto_compaction (LLM call). A "hard halt" is
@@ -156,7 +156,7 @@ memory_files:
   enabled: true
   max_files: 5
 
-# Sandbox policy. See mini_coding_agent.sandbox for the field semantics.
+# Sandbox policy. See codelet.sandbox for the field semantics.
 # Override these to relax or tighten what risky tools may do. Keys are
 # optional; omit a key to keep the built-in defaults.
 sandbox: {}

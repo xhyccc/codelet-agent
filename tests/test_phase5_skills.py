@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from mini_coding_agent import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
-from mini_coding_agent.skills import (
+from codelet import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
+from codelet.skills import (
     discover_skills,
     load_skill_body,
     render_skill_manifest,

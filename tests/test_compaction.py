@@ -2,7 +2,7 @@
 
 import pytest
 
-from mini_coding_agent.compaction import (
+from codelet.compaction import (
     AUTOCOMPACT_SYSTEM_PROMPT,
     DEFAULT_COMPACTION,
     HardHaltError,

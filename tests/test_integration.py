@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from mini_coding_agent import (
+from codelet import (
     FakeModelClient,
     MiniAgent,
     SessionStore,
@@ -10,7 +10,7 @@ from mini_coding_agent import (
     build_arg_parser,
     _post_process_args,
 )
-from mini_coding_agent.cli import build_agent as cli_build_agent
+from codelet.cli import build_agent as cli_build_agent
 
 
 def _workspace(tmp_path):

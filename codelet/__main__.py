@@ -1,4 +1,4 @@
-"""Entry point for ``python -m mini_coding_agent``."""
+"""Entry point for ``python -m codelet``."""
 
 from .cli import main
 

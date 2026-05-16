@@ -1,6 +1,6 @@
 """Tests for session-baseline verification."""
 
-from mini_coding_agent.baseline import (
+from codelet.baseline import (
     capture_baseline,
     diff_baseline,
     verify_session_baseline,

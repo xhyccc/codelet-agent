@@ -27,7 +27,7 @@ of looping forever.
 
 All stages are implemented as pure functions over a *copy* of the history
 list. The history items follow the same schema produced by
-:meth:`mini_coding_agent.agent.MiniAgent.record` (``role`` in
+:meth:`codelet.agent.MiniAgent.record` (``role`` in
 ``{"user", "assistant", "tool"}``; ``tool`` items have ``name``, ``args``,
 ``content``).
 """

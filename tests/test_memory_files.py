@@ -1,6 +1,6 @@
 """Tests for hierarchical filesystem-backed memory."""
 
-from mini_coding_agent.memory_files import (
+from codelet.memory_files import (
     LAYER_WEIGHTS,
     discover_memory_files,
     render_memory_files,

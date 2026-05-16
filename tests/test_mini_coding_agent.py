@@ -3,7 +3,7 @@ import sys
 import pytest
 from unittest.mock import MagicMock, patch
 
-from mini_coding_agent import (
+from codelet import (
     FakeModelClient,
     MiniAgent,
     OllamaModelClient,
@@ -264,7 +264,7 @@ def test_prompt_top_level_sections_stay_flush_left_with_multiline_content(tmp_pa
         repo_root=str(tmp_path),
         branch="fix/prompt-indentation",
         default_branch="main",
-        status=" M mini_coding_agent.py\n?? tests/test_prompt.py",
+        status=" M codelet.py\n?? tests/test_prompt.py",
         recent_commits=["abc123 first commit", "def456 second commit"],
         project_docs={"README.md": "line1\nline2"},
     )
@@ -277,7 +277,7 @@ def test_prompt_top_level_sections_stay_flush_left_with_multiline_content(tmp_pa
     )
     agent.session["memory"] = {
         "task": "verify prompt formatting",
-        "files": ["mini_coding_agent.py"],
+        "files": ["codelet.py"],
         "notes": ["saw inconsistent indentation", "need regression coverage"],
     }
     agent.record({"role": "user", "content": "inspect prompt()", "created_at": "1"})
@@ -285,7 +285,7 @@ def test_prompt_top_level_sections_stay_flush_left_with_multiline_content(tmp_pa
         {
             "role": "tool",
             "name": "read_file",
-            "args": {"path": "mini_coding_agent.py"},
+            "args": {"path": "codelet.py"},
             "content": "    def prompt(self, user_message):\n        ...",
             "created_at": "2",
         }
@@ -562,7 +562,7 @@ def test_delegate_inherits_allowed_ops(tmp_path):
 # ---------------------------------------------------------------------------
 import os  # noqa: E402
 
-from mini_coding_agent import (  # noqa: E402
+from codelet import (  # noqa: E402
     LLM_PROVIDER_PRESETS,
     _post_process_args,
     build_arg_parser,
@@ -571,7 +571,7 @@ from mini_coding_agent import (  # noqa: E402
     sandbox_check_shell,
     sandbox_filter_env,
 )
-from mini_coding_agent import build_agent as cli_build_agent  # noqa: E402
+from codelet import build_agent as cli_build_agent  # noqa: E402
 
 
 def _parse(*argv):

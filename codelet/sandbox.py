@@ -5,7 +5,7 @@ denylists are intentionally conservative: catch obvious destructive or
 privilege-escalating patterns without trying to be a real sandbox.
 
 The denylists themselves can be overridden via YAML config in
-``mini_coding_agent/config/default.yaml`` (see ``sandbox`` section).
+``codelet/config/default.yaml`` (see ``sandbox`` section).
 """
 
 import os

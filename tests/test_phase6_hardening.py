@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from mini_coding_agent import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
-from mini_coding_agent.hardening import (
+from codelet import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
+from codelet.hardening import (
     DEFAULT_DECOY_TOOLS,
     UNDERCOVER_IDENTITY,
     apply_decoy_tools,

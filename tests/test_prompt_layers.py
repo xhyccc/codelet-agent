@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from mini_coding_agent import (
+from codelet import (
     FakeModelClient,
     MiniAgent,
     SessionStore,
@@ -29,7 +29,7 @@ def make_agent(tmp_path, **kwargs):
     store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
     config = dict(_ISOLATED_MEMORY_CFG)
     if "config" in kwargs:
-        from mini_coding_agent.config import deep_merge
+        from codelet.config import deep_merge
         config = deep_merge(config, kwargs.pop("config"))
     return MiniAgent(
         model_client=FakeModelClient([]),

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from mini_coding_agent import (
+from codelet import (
     FakeModelClient,
     MiniAgent,
     SessionStore,

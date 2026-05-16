@@ -3,7 +3,7 @@
 import os
 from unittest.mock import patch
 
-from mini_coding_agent.env_config import (
+from codelet.env_config import (
     discover_env_file,
     env_to_overrides,
     load_env_config,

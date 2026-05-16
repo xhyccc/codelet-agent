@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from mini_coding_agent.config import (
+from codelet.config import (
     BUILTIN_DEFAULTS,
     deep_merge,
     discover_workspace_config,

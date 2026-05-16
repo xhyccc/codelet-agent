@@ -3,14 +3,14 @@
 Each submodule is independently importable and has no required runtime
 dependencies beyond the Python standard library:
 
-* :mod:`mini_coding_agent.protocols.mcp` - Minimal MCP (Model Context
+* :mod:`codelet.protocols.mcp` - Minimal MCP (Model Context
   Protocol) stdio client + server.  Lets the agent consume external tools
   exposed by MCP servers (``mcp__<server>__<tool>``), and lets external
   hosts consume the agent's own tools.
-* :mod:`mini_coding_agent.protocols.a2a` - Tiny A2A (Agent-to-Agent) HTTP
+* :mod:`codelet.protocols.a2a` - Tiny A2A (Agent-to-Agent) HTTP
   server: publishes the agent card at ``/.well-known/agent.json`` and
   accepts ``tasks/send`` JSON-RPC requests.
-* :mod:`mini_coding_agent.protocols.acp` - ACP scaffolding stub.  Defines
+* :mod:`codelet.protocols.acp` - ACP scaffolding stub.  Defines
   the message shape so callers can experiment, but the full protocol is
   not bundled.
 

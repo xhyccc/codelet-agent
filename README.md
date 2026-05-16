@@ -3,7 +3,7 @@
 
 This folder contains a small standalone coding agent:
 
-- code: `mini_coding_agent/` (package)
+- code: `codelet/` (package)
 - CLI: `mini-coding-agent`
 
 It is a minimal local agent loop with:
@@ -70,7 +70,7 @@ Optional:
 - `uv` for environment management and the `mini-coding-agent` CLI entry point
 - `openai` Python package when using the OpenAI backend (`pip install openai`)
 
-This project has no mandatory Python runtime dependency beyond the standard library for the Ollama backend, so you can run it directly with `python -m mini_coding_agent` if you do not want to use `uv`. (PyYAML is optional — install it only if you want to override the packaged YAML config; otherwise the built-in defaults are used.)
+This project has no mandatory Python runtime dependency beyond the standard library for the Ollama backend, so you can run it directly with `python -m codelet` if you do not want to use `uv`. (PyYAML is optional — install it only if you want to override the packaged YAML config; otherwise the built-in defaults are used.)
 
 &nbsp;
 ## Install Ollama
@@ -138,7 +138,7 @@ Without `uv`, run the script directly:
 
 ```bash
 cd mini-coding-agent-CLI
-python -m mini_coding_agent
+python -m codelet
 ```
 
 By default it uses:
@@ -338,7 +338,7 @@ uv run mini-coding-agent --help
 Without `uv`:
 
 ```bash
-python -m mini_coding_agent --help
+python -m codelet --help
 ```
 
 CLI flags are passed before the agent starts. Use them to choose the workspace,
@@ -396,7 +396,7 @@ Important flags:
 &nbsp;
 ## Configuration via YAML
 
-All prompts (agent identity, rules, examples, retry notices, coordinator/override layers) and harness parameters (`max_steps`, `max_new_tokens`, timeouts, sampling, `allowed_ops`, `sandbox`, `approval`, sandbox denylists) are loaded from `mini_coding_agent/config/default.yaml`. You can override any subset of them without touching the packaged file:
+All prompts (agent identity, rules, examples, retry notices, coordinator/override layers) and harness parameters (`max_steps`, `max_new_tokens`, timeouts, sampling, `allowed_ops`, `sandbox`, `approval`, sandbox denylists) are loaded from `codelet/config/default.yaml`. You can override any subset of them without touching the packaged file:
 
 1. Pass `--config path/to/your.yaml` on the CLI, or
 2. Drop a `.mini-coding-agent/config.yaml` file at the root of your workspace - it is auto-discovered.
@@ -486,12 +486,12 @@ Both tools respect the depth guard (`harness.max_depth`, default `1`): sub-agent
 &nbsp;
 ## Protocol Integrations
 
-The `mini_coding_agent.protocols` subpackage provides lightweight, stdlib-only adapters so the agent can talk to the wider LLM ecosystem. All three modules can be imported independently.
+The `codelet.protocols` subpackage provides lightweight, stdlib-only adapters so the agent can talk to the wider LLM ecosystem. All three modules can be imported independently.
 
 ### MCP — Model Context Protocol
 
 ```python
-from mini_coding_agent.protocols import MCPClient, register_mcp_tools, serve_mcp_stdio
+from codelet.protocols import MCPClient, register_mcp_tools, serve_mcp_stdio
 
 # Consume tools from an external MCP server
 client = MCPClient(command=["npx", "-y", "@some/mcp-server"])
@@ -521,7 +521,7 @@ Registered MCP tools appear in the prompt as `mcp__<server>__<tool>` and behave 
 ### A2A — Agent-to-Agent
 
 ```python
-from mini_coding_agent.protocols import serve_a2a_blocking, build_agent_card
+from codelet.protocols import serve_a2a_blocking, build_agent_card
 
 # Serve the agent over HTTP so other agents can call it
 serve_a2a_blocking(agent, host="0.0.0.0", port=8080)
@@ -638,7 +638,7 @@ See [`.env.example`](.env.example) for the full template. `.env` is git-ignored 
 &nbsp;
 ## Context Management & Compaction
 
-When the transcript would otherwise overflow the model's context window, the agent runs a **graduated compaction cascade** rather than simply dropping old messages (which severely degrades reasoning). The cascade is implemented in [`mini_coding_agent/compaction.py`](mini_coding_agent/compaction.py).
+When the transcript would otherwise overflow the model's context window, the agent runs a **graduated compaction cascade** rather than simply dropping old messages (which severely degrades reasoning). The cascade is implemented in [`codelet/compaction.py`](codelet/compaction.py).
 
 Five stages run in order; the cascade stops at the first stage that brings the rendered transcript under `harness.compaction.target_chars`:
 
@@ -688,7 +688,7 @@ Configure under `memory_files`:
 memory_files:
   enabled: true
   max_files: 5
-  # Optional path overrides; see mini_coding_agent.memory_files for defaults:
+  # Optional path overrides; see codelet.memory_files for defaults:
   # global_roots: [/etc/mini-coding-agent]
   # user_roots:   [~/.claude, ~/.mini-coding-agent]
   # project_paths: [.claude/rules, .mini-coding-agent/rules.md, AGENTS.md, CLAUDE.md]
@@ -709,4 +709,4 @@ Every agent session begins with a **verification baseline check** against the ph
 
 The baseline is persisted into the session JSON. On the next session, `MiniAgent.baseline_drift` exposes a human-readable list of differences (`"HEAD moved: aaaa -> bbbb"`, `"file changed on disk: AGENTS.md"`, ...). Workspace rules in `CLAUDE.md` / `AGENTS.md` guarantee probabilistic compliance better than any external retrieval system would.
 
-See [`mini_coding_agent/baseline.py`](mini_coding_agent/baseline.py) for the API.
+See [`codelet/baseline.py`](codelet/baseline.py) for the API.

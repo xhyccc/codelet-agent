@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "Codelet"
+name = "codelet"
 version = "0.2.0"
 description = "Minimal standalone coding agent backed by Ollama or any OpenAI-compatible API"
 requires-python = ">=3.10"
@@ -16,7 +16,7 @@ openai = ["openai>=1.0.0"]
 yaml = ["pyyaml>=6.0"]
 
 [project.scripts]
-mini-coding-agent = "mini_coding_agent.cli:main"
+codelet = "codelet.cli:main"
 
 [dependency-groups]
 dev = [
@@ -26,7 +26,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["mini_coding_agent*"]
+include = ["codelet*"]
 
 [tool.setuptools.package-data]
-mini_coding_agent = ["config/*.yaml"]
+codelet = ["config/*.yaml"]

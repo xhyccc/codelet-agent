@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from mini_coding_agent import (
+from codelet import (
     FakeModelClient,
     MiniAgent,
     SessionStore,
     WorkspaceContext,
 )
-from mini_coding_agent.tools import _is_windows, _render_diff, _windows_shell_command
+from codelet.tools import _is_windows, _render_diff, _windows_shell_command
 
 
 def _agent(tmp_path):

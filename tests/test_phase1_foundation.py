@@ -3,7 +3,7 @@ ANSI/dedupe/clip helpers, and the checkpoint-summary compaction stage."""
 
 import pytest
 
-from mini_coding_agent import (
+from codelet import (
     CHECKPOINT_MARKER,
     AskResult,
     FakeModelClient,

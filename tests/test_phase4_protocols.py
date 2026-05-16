@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from mini_coding_agent import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
-from mini_coding_agent.protocols import (
+from codelet import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
+from codelet.protocols import (
     A2AAgentCard,
     ACPSessionStub,
     MCPClient,
