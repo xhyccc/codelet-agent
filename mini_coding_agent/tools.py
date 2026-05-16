@@ -18,7 +18,20 @@ from .sandbox import (
     sandbox_filter_env,
     sandbox_preexec,
 )
-from .utils import ALL_TOOL_OPS, IGNORED_PATH_NAMES
+from .utils import (
+    ALL_TOOL_OPS,
+    IGNORED_PATH_NAMES,
+    clip_head_tail,
+    dedupe_lines,
+    strip_ansi,
+)
+
+
+def _scrub_subprocess_text(text, *, limit):
+    """Strip ANSI, dedupe repeated lines, and head/tail-clip ``text``."""
+    if not text:
+        return text
+    return clip_head_tail(dedupe_lines(strip_ansi(text)), limit)
 
 
 class ToolRegistry:
@@ -210,13 +223,15 @@ class ToolRegistry:
             timeout=timeout,
             **sandbox_kwargs,
         )
+        tool_out_cfg = (harness.get("tool_output") or {})
+        out_limit = int(tool_out_cfg.get("max_chars", harness.get("max_tool_output", 4000)))
         return "\n".join(
             [
                 f"exit_code: {result.returncode}",
                 "stdout:",
-                result.stdout.strip() or "(empty)",
+                _scrub_subprocess_text(result.stdout, limit=out_limit).strip() or "(empty)",
                 "stderr:",
-                result.stderr.strip() or "(empty)",
+                _scrub_subprocess_text(result.stderr, limit=out_limit).strip() or "(empty)",
             ]
         )
 
@@ -255,13 +270,15 @@ class ToolRegistry:
             )
         finally:
             os.unlink(tmp_path)
+        tool_out_cfg = (harness.get("tool_output") or {})
+        out_limit = int(tool_out_cfg.get("max_chars", harness.get("max_tool_output", 4000)))
         return "\n".join(
             [
                 f"exit_code: {result.returncode}",
                 "stdout:",
-                result.stdout.strip() or "(empty)",
+                _scrub_subprocess_text(result.stdout, limit=out_limit).strip() or "(empty)",
                 "stderr:",
-                result.stderr.strip() or "(empty)",
+                _scrub_subprocess_text(result.stderr, limit=out_limit).strip() or "(empty)",
             ]
         )
 

@@ -28,6 +28,7 @@ htmlcov/
 *.swp
 *.swo
 *~
+claude_ref
 
 # Local scratch space
 tmp/

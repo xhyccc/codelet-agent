@@ -31,12 +31,16 @@ from .cli import build_agent, build_arg_parser, main, _post_process_args
 from .clients import FakeModelClient, OllamaModelClient, OpenAIModelClient
 from .compaction import (
     AUTOCOMPACT_SYSTEM_PROMPT,
+    CHECKPOINT_MARKER,
+    CHECKPOINT_SYSTEM_PROMPT,
     DEFAULT_COMPACTION,
     HardHaltError,
     auto_compaction,
     budget_reduction,
     build_autocompact_prompt,
+    checkpoint_summary,
     context_collapse,
+    has_checkpoint,
     microcompaction,
     render_history_size,
     run_cascade,
@@ -95,6 +99,7 @@ from .sandbox import (
     sandbox_preexec,
 )
 from .sessions import SessionStore
+from .stop_reason import AskResult, StopReason
 from .tools import ToolRegistry
 from .utils import (
     ALL_TOOL_OPS,
@@ -106,8 +111,11 @@ from .utils import (
     MAX_TOOL_OUTPUT,
     WELCOME_ART,
     clip,
+    clip_head_tail,
+    dedupe_lines,
     middle,
     now,
+    strip_ansi,
 )
 from .welcome import build_welcome
 from .workspace import WorkspaceContext
@@ -116,7 +124,10 @@ from .workspace import WorkspaceContext
 __all__ = [
     "ALL_TOOL_OPS",
     "AUTOCOMPACT_SYSTEM_PROMPT",
+    "AskResult",
     "BUILTIN_DEFAULTS",
+    "CHECKPOINT_MARKER",
+    "CHECKPOINT_SYSTEM_PROMPT",
     "DEFAULT_COMPACTION",
     "DEFAULT_MAX_FILES",
     "DOC_NAMES",
@@ -137,6 +148,7 @@ __all__ = [
     "SANDBOX_PYTHON_DENY_PATTERNS",
     "SANDBOX_SHELL_DENY_PATTERNS",
     "SessionStore",
+    "StopReason",
     "ToolRegistry",
     "WELCOME_ART",
     "WorkspaceContext",
@@ -152,8 +164,11 @@ __all__ = [
     "build_prompt",
     "build_welcome",
     "capture_baseline",
+    "checkpoint_summary",
     "clip",
+    "clip_head_tail",
     "context_collapse",
+    "dedupe_lines",
     "deep_merge",
     "diff_baseline",
     "discover_env_file",
@@ -162,6 +177,7 @@ __all__ = [
     "env_to_overrides",
     "extract",
     "extract_raw",
+    "has_checkpoint",
     "load_config",
     "load_env_config",
     "load_env_into_environ",
@@ -187,5 +203,6 @@ __all__ = [
     "sandbox_preexec",
     "select_memory_files",
     "snipping",
+    "strip_ansi",
     "verify_session_baseline",
 ]

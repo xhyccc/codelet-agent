@@ -25,6 +25,7 @@ from .prompt import (
     build_prompt,
 )
 from . import sandbox as sandbox_module
+from .stop_reason import AskResult, StopReason
 from .tools import ToolRegistry, tool_argument_validators
 from .utils import clip, now
 
@@ -72,6 +73,9 @@ class MiniAgent:
         self.allowed_ops = allowed_ops
         self.sandbox = sandbox if sandbox in ("off", "lite") else "lite"
         self.tool_output_callback = tool_output_callback
+        self.last_stop_reason = None
+        self.last_ask_result = None
+        self.last_compaction_stages = []
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
             "created_at": now(),
@@ -212,6 +216,13 @@ class MiniAgent:
     # ---- main loop ------------------------------------------------------
 
     def ask(self, user_message):
+        """Run one user turn through the tool loop.
+
+        Returns the final assistant message as a ``str`` for backward
+        compatibility. The full structured outcome is also recorded on
+        ``self.last_ask_result`` (an :class:`AskResult`) and the termination
+        reason on ``self.last_stop_reason`` (a :class:`StopReason`).
+        """
         memory = self.session["memory"]
         if not memory["task"]:
             memory["task"] = clip(user_message.strip(), 300)
@@ -220,9 +231,24 @@ class MiniAgent:
         retry_template = self.config.get("prompts", {}).get(
             "retry_notice", BUILTIN_DEFAULTS["prompts"]["retry_notice"]
         )
+        harness = self.config.get("harness", {})
+        repeated_error_threshold = int(harness.get("repeated_error_threshold", 3))
         tool_steps = 0
         attempts = 0
         max_attempts = max(self.max_steps * 3, self.max_steps + 4)
+
+        def _finish(final_text, reason):
+            self.record({"role": "assistant", "content": final_text, "created_at": now()})
+            result = AskResult(
+                final=final_text,
+                reason=reason,
+                tool_steps=tool_steps,
+                attempts=attempts,
+                compaction_stages=list(self.last_compaction_stages or []),
+            )
+            self.last_stop_reason = reason
+            self.last_ask_result = result
+            return final_text
 
         while tool_steps < self.max_steps and attempts < max_attempts:
             attempts += 1
@@ -230,8 +256,7 @@ class MiniAgent:
                 prompt = self.prompt(user_message)
             except compaction_module.HardHaltError:
                 final = self._force_compact_history()
-                self.record({"role": "assistant", "content": final, "created_at": now()})
-                return final
+                return _finish(final, StopReason.HARD_HALT_RECOVERED)
             raw = self.model_client.complete(prompt, self.max_new_tokens)
             kind, payload = parsing.parse_model_output(raw, retry_template)
 
@@ -252,6 +277,17 @@ class MiniAgent:
                     }
                 )
                 self.note_tool(name, args, result)
+                # Frustration / repeated-error detector: if the same tool has
+                # failed N times in a row, give up the loop instead of letting
+                # the model spin against an unfixable error.
+                if self._tool_error_streak(name) >= repeated_error_threshold:
+                    final = (
+                        f"Gave up after {repeated_error_threshold} consecutive "
+                        f"errors from `{name}`. Last error: "
+                        f"{clip(str(result), 200)}. "
+                        "Please clarify the task or the path/arguments."
+                    )
+                    return _finish(final, StopReason.REPEATED_ERROR_GIVEUP)
                 continue
 
             if kind == "retry":
@@ -259,16 +295,31 @@ class MiniAgent:
                 continue
 
             final = (payload or raw).strip()
-            self.record({"role": "assistant", "content": final, "created_at": now()})
             self.remember(memory["notes"], clip(final, 220), 5)
-            return final
+            return _finish(final, StopReason.FINAL)
 
         if attempts >= max_attempts and tool_steps < self.max_steps:
             final = "Stopped after too many malformed model responses without a valid tool call or final answer."
-        else:
-            final = "Stopped after reaching the step limit without a final answer."
-        self.record({"role": "assistant", "content": final, "created_at": now()})
-        return final
+            return _finish(final, StopReason.ATTEMPT_LIMIT)
+        final = "Stopped after reaching the step limit without a final answer."
+        return _finish(final, StopReason.STEP_LIMIT)
+
+    def _tool_error_streak(self, name):
+        """Count how many consecutive tool calls for ``name`` ended in an
+        error result (string starting with ``error:``).
+        """
+        streak = 0
+        for item in reversed(self.session["history"]):
+            if item.get("role") != "tool":
+                continue
+            if item.get("name") != name:
+                break
+            content = str(item.get("content", ""))
+            if content.lstrip().lower().startswith("error:"):
+                streak += 1
+            else:
+                break
+        return streak
 
     # ---- compaction helpers --------------------------------------------
 

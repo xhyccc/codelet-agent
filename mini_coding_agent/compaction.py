@@ -58,6 +58,12 @@ DEFAULT_COMPACTION = {
     # Tool names that produce file-read output (skipped from budgeting so the
     # model retains full visibility of critical code).
     "fileread_tools": ["read_file"],
+    # Item-count watermark above which a one-shot checkpoint summary fires
+    # before the regular cascade. Set to 0 to disable.
+    "checkpoint_watermark": 50,
+    # When checkpointing, how many of the oldest items to fold into the
+    # synthetic [checkpoint_summary] entry.
+    "checkpoint_fold": 30,
 }
 
 
@@ -239,6 +245,93 @@ def context_collapse(
 
 
 # ---------------------------------------------------------------------------
+# Stage 0: checkpoint summary (item-count driven, runs once)
+# ---------------------------------------------------------------------------
+
+
+CHECKPOINT_MARKER = "[checkpoint_summary]"
+
+CHECKPOINT_SYSTEM_PROMPT = (
+    "You are a transcript-checkpointer for a coding agent. The transcript "
+    "below has grown long. Produce a single dense paragraph that captures: "
+    "(1) the user's overall task; (2) every concrete fact discovered about "
+    "the workspace (file paths, function names, error messages); "
+    "(3) all decisions and constraints the user has imposed; (4) the "
+    "current plan and what remains to do. Do not invent facts. Do not "
+    "include code blocks or tool syntax. Plain prose only."
+)
+
+
+def has_checkpoint(history):
+    """Return True if a synthetic [checkpoint_summary] item already exists."""
+    for item in history:
+        if (
+            item.get("role") == "assistant"
+            and CHECKPOINT_MARKER in str(item.get("content", ""))
+            and item.get("checkpoint")
+        ):
+            return True
+    return False
+
+
+def checkpoint_summary(
+    history,
+    *,
+    model_client,
+    preserve_recent,
+    fold,
+    max_new_tokens=512,
+    system_prompt=None,
+):
+    """Stage 0: fold the oldest ``fold`` items into a single synthetic
+    ``[checkpoint_summary]`` assistant entry. Idempotent: once a checkpoint
+    exists in ``history`` it is left alone.
+
+    Unlike :func:`auto_compaction` this stage is *item-count-driven*, not
+    *char-count-driven*. It runs the first time the transcript grows past a
+    configurable watermark so the agent never enters the regular cascade with
+    a fully-bloated tail.
+    """
+    if has_checkpoint(history):
+        return deepcopy(history)
+    # Refuse to fold into emptiness: leave the most recent items alone.
+    cutoff = min(fold, max(0, len(history) - preserve_recent))
+    if cutoff <= 0:
+        return deepcopy(history)
+    older = history[:cutoff]
+    rest = history[cutoff:]
+    if model_client is None:
+        # No LLM available - produce a deterministic structural summary so
+        # the stage still has the desired effect on token count.
+        bullet_lines = []
+        for item in older:
+            role = item.get("role", "?")
+            if role == "tool":
+                name = item.get("name", "?")
+                bullet_lines.append(f"- tool:{name}")
+            else:
+                content = str(item.get("content", "")).strip().splitlines()
+                head = content[0][:80] if content else ""
+                bullet_lines.append(f"- {role}: {head}")
+        body = "\n".join(bullet_lines[:50])
+        summary = f"Structural summary of {len(older)} earlier turns:\n{body}"
+    else:
+        prompt = build_autocompact_prompt(
+            older, system_prompt=system_prompt or CHECKPOINT_SYSTEM_PROMPT
+        )
+        summary = model_client.complete(prompt, max_new_tokens).strip() or (
+            f"[no summary produced for {len(older)} earlier turns]"
+        )
+    synthetic = {
+        "role": "assistant",
+        "content": f"{CHECKPOINT_MARKER} {summary}",
+        "compacted": True,
+        "checkpoint": True,
+    }
+    return [synthetic, *deepcopy(rest)]
+
+
+# ---------------------------------------------------------------------------
 # Stage 5: auto-compaction (LLM-driven)
 # ---------------------------------------------------------------------------
 
@@ -343,6 +436,20 @@ def run_cascade(
     applied = []
     working = deepcopy(history)
     budget = current_budget
+
+    # Stage 0: one-shot checkpoint summary, item-count driven. Runs even
+    # when the rendered size is below ``target_chars`` so long-running
+    # sessions get a stable backbone before they ever stress the cascade.
+    watermark = cfg.get("checkpoint_watermark", 0)
+    if watermark and len(working) >= watermark and not has_checkpoint(working):
+        working = checkpoint_summary(
+            working,
+            model_client=model_client,
+            preserve_recent=cfg["preserve_recent"],
+            fold=cfg.get("checkpoint_fold", 30),
+            max_new_tokens=autocompact_tokens,
+        )
+        applied.append("checkpoint_summary")
 
     if render_history_size(working) <= target:
         return {"history": working, "budget": budget, "stages_applied": applied, "halted": False}
