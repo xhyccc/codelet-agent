@@ -18,14 +18,25 @@ def make_workspace(tmp_path):
     return WorkspaceContext.build(tmp_path)
 
 
+# Isolate prompt-layer tests from any memory files the developer has in
+# ~/.claude or ~/.mini-coding-agent so assertions about which XML layers are
+# present are stable across machines.
+_ISOLATED_MEMORY_CFG = {"memory_files": {"enabled": True, "global_roots": [], "user_roots": []}}
+
+
 def make_agent(tmp_path, **kwargs):
     workspace = make_workspace(tmp_path)
     store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    config = dict(_ISOLATED_MEMORY_CFG)
+    if "config" in kwargs:
+        from mini_coding_agent.config import deep_merge
+        config = deep_merge(config, kwargs.pop("config"))
     return MiniAgent(
         model_client=FakeModelClient([]),
         workspace=workspace,
         session_store=store,
         approval_policy="auto",
+        config=config,
         **kwargs,
     )
 

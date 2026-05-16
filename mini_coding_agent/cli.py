@@ -8,7 +8,7 @@ from pathlib import Path
 from .agent import MiniAgent
 from .clients import OllamaModelClient, OpenAIModelClient
 from .config import deep_merge, discover_workspace_config, load_config
-from .env_config import discover_env_file, load_env_config, load_env_into_environ
+from .env_config import load_env_config, load_env_into_environ
 from .providers import LLM_PROVIDER_PRESETS, resolve_provider_preset
 from .sessions import SessionStore
 from .utils import HELP_DETAILS
@@ -32,8 +32,12 @@ def build_agent(args):
     # of provider keys later in this function (via os.environ) and the
     # ``harness`` config slice via env_to_overrides. An explicit --env-file
     # CLI flag overrides the auto-discovered ``.env`` at the workspace root.
-    env_file = getattr(args, "env_file", None) or discover_env_file(workspace.repo_root)
-    env_dict, env_overrides = load_env_config(path=env_file)
+    # Explicit --env-file wins; otherwise discover from the workspace root.
+    # We always pass cwd=workspace.repo_root so discovery uses the project
+    # directory, NOT the process CWD (which would be the pytest runner dir
+    # during tests and could accidentally load an unrelated .env).
+    env_file = getattr(args, "env_file", None)
+    env_dict, env_overrides = load_env_config(path=env_file, cwd=workspace.repo_root)
     if env_dict:
         load_env_into_environ(env_dict, override=False)
 
