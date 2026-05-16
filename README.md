@@ -1,10 +1,10 @@
 &nbsp;
-# Mini-Coding-Agent
+# Codelet
 
 This folder contains a small standalone coding agent:
 
 - code: `codelet/` (package)
-- CLI: `mini-coding-agent`
+- CLI: `codelet`
 
 It is a minimal local agent loop with:
 
@@ -67,7 +67,7 @@ You need:
 
 Optional:
 
-- `uv` for environment management and the `mini-coding-agent` CLI entry point
+- `uv` for environment management and the `codelet` CLI entry point
 - `openai` Python package when using the OpenAI backend (`pip install openai`)
 
 This project has no mandatory Python runtime dependency beyond the standard library for the Ollama backend, so you can run it directly with `python -m codelet` if you do not want to use `uv`. (PyYAML is optional — install it only if you want to override the packaged YAML config; otherwise the built-in defaults are used.)
@@ -109,15 +109,15 @@ The default in this project is `qwen3.5:4b`. If you have sufficient memory, it i
 Clone the repo or your fork and change into it:
 
 ```bash
-git clone https://github.com/xhyccc/mini-coding-agent-CLI.git
-cd mini-coding-agent-CLI
+git clone https://github.com/xhyccc/codelet-agent.git
+cd codelet-agent
 ```
 
 If you forked it first, use your fork URL instead:
 
 ```bash
-git clone https://github.com/<your-github-user>/mini-coding-agent-CLI.git
-cd mini-coding-agent-CLI
+git clone https://github.com/<your-github-user>/codelet-agent.git
+cd codelet-agent
 ```
 
 
@@ -130,14 +130,14 @@ cd mini-coding-agent-CLI
 Start the agent:
 
 ```bash
-cd mini-coding-agent-CLI
-uv run mini-coding-agent
+cd codelet-agent
+uv run codelet
 ```
 
 Without `uv`, run the script directly:
 
 ```bash
-cd mini-coding-agent-CLI
+cd codelet-agent
 python -m codelet
 ```
 
@@ -150,20 +150,20 @@ By default it uses:
 ### OpenAI-compatible backend
 
 ```bash
-uv run mini-coding-agent --backend openai --model gpt-4o-mini --openai-api-key YOUR_KEY
+uv run codelet --backend openai --model gpt-4o-mini --openai-api-key YOUR_KEY
 ```
 
 Or set the key via environment variable:
 
 ```bash
 export OPENAI_API_KEY=YOUR_KEY
-uv run mini-coding-agent --backend openai --model gpt-4o-mini
+uv run codelet --backend openai --model gpt-4o-mini
 ```
 
 To use a compatible third-party API (e.g., a local OpenAI-compatible server):
 
 ```bash
-uv run mini-coding-agent --backend openai --model your-model \
+uv run codelet --backend openai --model your-model \
   --openai-base-url http://localhost:8000/v1 --openai-api-key none
 ```
 
@@ -191,19 +191,19 @@ Examples:
 ```bash
 # Kimi / Moonshot
 export MOONSHOT_API_KEY=sk-...
-uv run mini-coding-agent --provider kimi "List the files in this repo."
+uv run codelet --provider kimi "List the files in this repo."
 
 # Zhipu GLM
 export ZHIPU_API_KEY=sk-...
-uv run mini-coding-agent --provider glm --model glm-4-plus "Summarize README.md"
+uv run codelet --provider glm --model glm-4-plus "Summarize README.md"
 
 # SiliconFlow
 export SILICONFLOW_API_KEY=sk-...
-uv run mini-coding-agent --provider siliconflow
+uv run codelet --provider siliconflow
 
 # Any other OpenAI-compatible endpoint
 export CUSTOM_LLM_API_KEY=sk-...
-uv run mini-coding-agent --provider custom \
+uv run codelet --provider custom \
   --openai-base-url https://my-internal-llm.example/v1 \
   --model my-internal-model
 ```
@@ -217,13 +217,13 @@ or override the endpoint as needed.
 Pass a task as a positional argument to run the agent non-interactively and exit:
 
 ```bash
-uv run mini-coding-agent "List the files in this repo and summarize the project."
+uv run codelet "List the files in this repo and summarize the project."
 ```
 
 Approval defaults to `auto` in one-shot mode. To override:
 
 ```bash
-uv run mini-coding-agent --approval ask "Refactor the main function."
+uv run codelet --approval ask "Refactor the main function."
 ```
 
 For a concrete usage example, see [EXAMPLE.md](EXAMPLE.md).
@@ -243,7 +243,7 @@ Risky tools such as shell commands and file writes are gated by approval.
 Example:
 
 ```bash
-uv run mini-coding-agent --approval auto
+uv run codelet --approval auto
 ```
 
 
@@ -278,10 +278,10 @@ the environment).
 
 ```bash
 # default — lightweight sandbox enabled
-uv run mini-coding-agent
+uv run codelet
 
 # disable
-uv run mini-coding-agent --sandbox off
+uv run codelet --sandbox off
 ```
 
 
@@ -298,14 +298,14 @@ The agent saves sessions under the target workspace root in:
 Resume the latest session:
 
 ```bash
-uv run mini-coding-agent --resume latest
+uv run codelet --resume latest
 ```
 
 
 Resume a specific session:
 
 ```bash
-uv run mini-coding-agent --resume 20260401-144025-2dd0aa
+uv run codelet --resume 20260401-144025-2dd0aa
 ```
 
 
@@ -332,7 +332,7 @@ being sent to the model as a normal task.
 ## Main CLI Flags
 
 ```bash
-uv run mini-coding-agent --help
+uv run codelet --help
 ```
 
 Without `uv`:
@@ -545,7 +545,7 @@ Inject three fake tool entries (`secret_eval`, `network_probe`, `exfiltrate`) in
 
 Enable via flag:
 ```bash
-uv run mini-coding-agent --decoy-tools
+uv run codelet --decoy-tools
 ```
 
 Or via config:
@@ -559,7 +559,7 @@ harness:
 When `--approval ask` is active, the agent normally prompts before every `run_shell` call. With `--yolo`, trivially safe commands (`ls`, `pwd`, `cat`, `git status`, `git log`, `python --version`, ...) are auto-approved without a prompt. Commands containing shell metacharacters (`;`, `|`, `&`, `` ` ``, `$`, `>`, `<`, `\`) or anything outside the explicit safelist are still gated normally.
 
 ```bash
-uv run mini-coding-agent --yolo
+uv run codelet --yolo
 ```
 
 Or via config:
