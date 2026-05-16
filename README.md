@@ -16,7 +16,7 @@ It is a minimal local agent loop with:
 - bounded delegation and parallel sub-agent dispatch
 - **graduated compaction cascade** for context-window pressure
 - **hierarchical filesystem memory** (`CLAUDE.md` / `AGENTS.md` / `.claude/rules/`)
-- **progressive-disclosure skills** (`SKILL.md` library under `.mini-coding-agent/skills/`)
+- **progressive-disclosure skills** (`SKILL.md` library under `.codelet/skills/`)
 - **session-baseline verification** to detect repo drift across runs
 - **`.env`-based configuration** for provider, key, model, and harness knobs
 - **protocol integrations** — MCP client/server, A2A HTTP server, ACP stub
@@ -130,14 +130,14 @@ cd codelet
 Start the agent:
 
 ```bash
-cd codelet-agent
+cd codelet
 uv run codelet
 ```
 
 Without `uv`, run the script directly:
 
 ```bash
-cd codelet-agent
+cd codelet
 python -m codelet
 ```
 
@@ -292,7 +292,7 @@ uv run codelet --sandbox off
 The agent saves sessions under the target workspace root in:
 
 ```text
-.mini-coding-agent/sessions/
+.codelet/sessions/
 ```
 
 Resume the latest session:
@@ -391,7 +391,7 @@ Important flags:
 - `--yolo`
   auto-approve obviously-safe shell commands (`ls`, `pwd`, `cat`, `git status`, ...) when `--approval ask` is active, without prompting. See [Hardening](#hardening).
 - `--undercover`
-  replace the agent identity with a generic "helpful assistant" string and suppress the welcome banner; equivalent to `MINI_AGENT_UNDERCOVER=1`. See [Hardening](#hardening).
+  replace the agent identity with a generic "helpful assistant" string and suppress the welcome banner; equivalent to `CODELET_UNDERCOVER=1`. See [Hardening](#hardening).
 
 &nbsp;
 ## Configuration via YAML
@@ -399,11 +399,11 @@ Important flags:
 All prompts (agent identity, rules, examples, retry notices, coordinator/override layers) and harness parameters (`max_steps`, `max_new_tokens`, timeouts, sampling, `allowed_ops`, `sandbox`, `approval`, sandbox denylists) are loaded from `codelet/config/default.yaml`. You can override any subset of them without touching the packaged file:
 
 1. Pass `--config path/to/your.yaml` on the CLI, or
-2. Drop a `.mini-coding-agent/config.yaml` file at the root of your workspace - it is auto-discovered.
+2. Drop a `.codelet/config.yaml` file at the root of your workspace - it is auto-discovered.
 
-Resolution order is: packaged defaults < workspace `.mini-coding-agent/config.yaml` < explicit `--config` file. Per-call CLI flags still take precedence over everything in YAML.
+Resolution order is: packaged defaults < workspace `.codelet/config.yaml` < explicit `--config` file. Per-call CLI flags still take precedence over everything in YAML.
 
-Project-specific rules placed in `AGENTS.md` (or `.mini-coding-agent/rules.md`) at the repo root are automatically pulled into the prompt's `<project-rules>` layer.
+Project-specific rules placed in `AGENTS.md` (or `.codelet/rules.md`) at the repo root are automatically pulled into the prompt's `<project-rules>` layer.
 
 PyYAML is an optional dependency. Install with `pip install pyyaml` (or `pip install -e .[yaml]`) only if you want to load custom YAML; otherwise the agent uses its built-in defaults.
 
@@ -411,9 +411,9 @@ PyYAML is an optional dependency. Install with `pip install pyyaml` (or `pip ins
 
 The prompt is assembled in up to six XML-tagged layers ordered from most stable (top, cacheable) to most volatile (bottom):
 
-1. `<agent-identity>` — who the agent is. **Always present.** Replaced by a generic string when `--undercover` / `MINI_AGENT_UNDERCOVER=1` is active.
+1. `<agent-identity>` — who the agent is. **Always present.** Replaced by a generic string when `--undercover` / `CODELET_UNDERCOVER=1` is active.
 2. `<system-defaults>` — immutable rules, tool catalog, response examples. **Always present.**
-3. `<project-rules>` — per-repo overrides (`AGENTS.md`, `.mini-coding-agent/rules.md`), selected hierarchical memory files, and the skill manifest (name + description for each discovered skill). Emitted only when content is found.
+3. `<project-rules>` — per-repo overrides (`AGENTS.md`, `.codelet/rules.md`), selected hierarchical memory files, and the skill manifest (name + description for each discovered skill). Emitted only when content is found.
 4. `<coordinator>` — delegation/swarm guidance. Emitted only when delegation is enabled.
 5. `<override>` — volatile session overrides from YAML config or CLI. Emitted only when configured.
 6. `<workspace>` — workspace snapshot (cwd, branch, status, docs). **Always present.**
@@ -433,27 +433,27 @@ The agent exposes the following tools to the model. Tools are grouped into categ
 | `glob` | `read` | no | List workspace files matching a glob pattern (e.g. `**/*.py`) |
 | `write_file` | `write` | **yes** | Write a text file |
 | `patch_file` | `write` | **yes** | Replace one exact text block in a file (in-place diff-style edit) |
-| `delete_file` | `write` | **yes** | Delete a file (moves to `.mini-coding-agent/trash/` instead of permanent deletion) |
+| `delete_file` | `write` | **yes** | Delete a file (moves to `.codelet/trash/` instead of permanent deletion) |
 | `move_file` | `write` | **yes** | Move or rename a file inside the workspace |
 | `run_shell` | `bash` | **yes** | Run a shell command in the repo root (PowerShell/cmd on Windows) |
 | `run_python` | `python` | **yes** | Execute Python code in the repo root and return its output |
 | `delegate` | — | no | Ask a bounded read-only child agent to investigate |
 | `delegate_parallel` | — | no | Dispatch multiple sub-agent tasks concurrently and collect results |
 | `decompose` | — | no | Ask the agent to split a complex task into independent subtasks |
-| `load_skill` | — | no | Fetch the full body of a named skill from `.mini-coding-agent/skills/` |
-| `remember_fact` | `write` | no | Append a short fact to `.mini-coding-agent/repo-memory.md` |
+| `load_skill` | — | no | Fetch the full body of a named skill from `.codelet/skills/` |
+| `remember_fact` | `write` | no | Append a short fact to `.codelet/repo-memory.md` |
 
 Risky tools require approval. The approval mode (`--approval`) controls whether the user is prompted (`ask`), the action is allowed automatically (`auto`), or it is always denied (`never`).
 
 &nbsp;
 ## Progressive-Disclosure Skills
 
-Skills are reusable prompt snippets stored under `.mini-coding-agent/skills/<name>/SKILL.md`. At startup, only the name and one-line description of each skill are injected into the system prompt. The model calls `load_skill(name)` to retrieve the full body on demand — keeping the baseline prompt small while making complex procedures available.
+Skills are reusable prompt snippets stored under `.codelet/skills/<name>/SKILL.md`. At startup, only the name and one-line description of each skill are injected into the system prompt. The model calls `load_skill(name)` to retrieve the full body on demand — keeping the baseline prompt small while making complex procedures available.
 
 A skill directory looks like:
 
 ```
-.mini-coding-agent/skills/
+.codelet/skills/
   changelog-writer/
     SKILL.md           ← required; YAML front-matter + body
     template.md        ← optional sibling assets
@@ -502,7 +502,7 @@ client.start()
 serve_mcp_stdio(agent)  # communicates over stdin/stdout
 ```
 
-Server discovery uses `~/.mini-coding-agent/mcp.json` or `<workspace>/.mini-coding-agent/mcp.json`:
+Server discovery uses `~/.codelet/mcp.json` or `<workspace>/.codelet/mcp.json`:
 
 ```json
 {
@@ -570,12 +570,12 @@ harness:
 
 ### Undercover identity (`--undercover`)
 
-Replace the agent's `<agent-identity>` layer with a generic "helpful assistant" string and suppress the welcome banner. Equivalent to setting `MINI_AGENT_UNDERCOVER=1` in the environment. Useful for benchmark and eval runs where you do not want the model to recognise the harness.
+Replace the agent's `<agent-identity>` layer with a generic "helpful assistant" string and suppress the welcome banner. Equivalent to setting `CODELET_UNDERCOVER=1` in the environment. Useful for benchmark and eval runs where you do not want the model to recognise the harness.
 
 ```bash
-uv run mini-coding-agent --undercover
+uv run codelet --undercover
 # or
-MINI_AGENT_UNDERCOVER=1 uv run mini-coding-agent
+CODELET_UNDERCOVER=1 uv run codelet
 ```
 
 &nbsp;
@@ -599,7 +599,7 @@ See [EXAMPLE.md](EXAMPLE.md)
 
 The CLI auto-discovers a `.env` file at the workspace root (override the location with `--env-file PATH`). Values from `.env` populate the LLM provider, key, model, base URL, and a small set of harness knobs.
 
-Resolution order is: **CLI flags > `.env` > workspace `.mini-coding-agent/config.yaml` > packaged YAML defaults**. `.env` values are also exported into `os.environ` (non-clobbering by default) so existing API-key resolution logic continues to work.
+Resolution order is: **CLI flags > `.env` > workspace `.codelet/config.yaml` > packaged YAML defaults**. `.env` values are also exported into `os.environ` (non-clobbering by default) so existing API-key resolution logic continues to work.
 
 Supported keys:
 
@@ -613,12 +613,12 @@ Supported keys:
 | `ZHIPU_API_KEY` | Zhipu / GLM |
 | `SILICONFLOW_API_KEY` | SiliconFlow |
 | `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `TOGETHER_API_KEY`, `DASHSCOPE_API_KEY`, `OPENAI_API_KEY` | Provider-specific fallbacks |
-| `MINI_AGENT_MAX_STEPS` | Sets `harness.max_steps` (CLI default) |
-| `MINI_AGENT_MAX_NEW_TOKENS` | Sets `harness.max_new_tokens` |
-| `MINI_AGENT_OPENAI_TIMEOUT` | Sets `harness.openai_timeout` |
-| `MINI_AGENT_TOOL_TIMEOUT` | Default timeout (seconds) for `run_shell` / `run_python` tool calls; model may request less but not more than `MINI_AGENT_TOOL_MAX_TIMEOUT`; default `20` |
-| `MINI_AGENT_TOOL_MAX_TIMEOUT` | Upper clamp (seconds) on tool call timeouts the model may request; default `120` |
-| `MINI_AGENT_CMD` | Recognised by the documented launcher schema; ignored by the agent itself |
+| `CODELET_MAX_STEPS` | Sets `harness.max_steps` (CLI default) |
+| `CODELET_MAX_NEW_TOKENS` | Sets `harness.max_new_tokens` |
+| `CODELET_OPENAI_TIMEOUT` | Sets `harness.openai_timeout` |
+| `CODELET_TOOL_TIMEOUT` | Default timeout (seconds) for `run_shell` / `run_python` tool calls; model may request less but not more than `CODELET_TOOL_MAX_TIMEOUT`; default `20` |
+| `CODELET_TOOL_MAX_TIMEOUT` | Upper clamp (seconds) on tool call timeouts the model may request; default `120` |
+| `CODELET_CMD` | Recognised by the documented launcher schema; ignored by the agent itself |
 
 Example `.env`:
 
@@ -626,11 +626,11 @@ Example `.env`:
 LLM_PROVIDER=kimi
 KIMI_API_KEY=sk-xxxxxxxxxxxxxxxx
 LLM_MODEL=moonshot-v1-32k
-MINI_AGENT_MAX_STEPS=15
-MINI_AGENT_OPENAI_TIMEOUT=300
-MINI_AGENT_MAX_NEW_TOKENS=8192
-MINI_AGENT_TOOL_TIMEOUT=60
-MINI_AGENT_TOOL_MAX_TIMEOUT=300
+CODELET_MAX_STEPS=15
+CODELET_OPENAI_TIMEOUT=300
+CODELET_MAX_NEW_TOKENS=8192
+CODELET_TOOL_TIMEOUT=60
+CODELET_TOOL_MAX_TIMEOUT=300
 ```
 
 See [`.env.example`](.env.example) for the full template. `.env` is git-ignored by default.
@@ -666,7 +666,7 @@ harness:
     autocompact_tokens: 512
 ```
 
-The durable on-disk transcript (`.mini-coding-agent/sessions/*.json`) is **never** mutated by compaction — only the prompt-rendered view is. Resuming a session keeps full fidelity.
+The durable on-disk transcript (`.codelet/sessions/*.json`) is **never** mutated by compaction — only the prompt-rendered view is. Resuming a session keeps full fidelity.
 
 &nbsp;
 ## Hierarchical Filesystem Memory
@@ -675,9 +675,9 @@ The agent treats context windows as finite, volatile, and quickly degrading. Ins
 
 | Layer | Paths (in resolution order) | Purpose |
 |---|---|---|
-| **global** | `/etc/mini-coding-agent/CLAUDE.md` and any `*.md` in `/etc/mini-coding-agent/` | System-wide defaults |
-| **user**   | `~/.claude/`, `~/.mini-coding-agent/` (`*.md`) | User preferences |
-| **project**| `<repo>/.claude/rules/*.md`, `<repo>/.mini-coding-agent/rules.md`, `<repo>/AGENTS.md`, `<repo>/CLAUDE.md` | Project-specific architectural records |
+| **global** | `/etc/codelet/CLAUDE.md` and any `*.md` in `/etc/codelet/` | System-wide defaults |
+| **user**   | `~/.claude/`, `~/.codelet/` (`*.md`) | User preferences |
+| **project**| `<repo>/.claude/rules/*.md`, `<repo>/.codelet/rules.md`, `<repo>/AGENTS.md`, `<repo>/CLAUDE.md` | Project-specific architectural records |
 | **local**  | `<repo>/CLAUDE.local.md` | Git-ignored workspace notes |
 
 The agent does an **LLM-friendly header-based scan** (no vector embeddings) of each candidate, scores them against the active task description, and includes up to `memory_files.max_files` (default **5**) in the `<project-rules>` layer. Layer precedence (`local > project > user > global`) breaks ties.
@@ -689,9 +689,9 @@ memory_files:
   enabled: true
   max_files: 5
   # Optional path overrides; see codelet.memory_files for defaults:
-  # global_roots: [/etc/mini-coding-agent]
-  # user_roots:   [~/.claude, ~/.mini-coding-agent]
-  # project_paths: [.claude/rules, .mini-coding-agent/rules.md, AGENTS.md, CLAUDE.md]
+  # global_roots: [/etc/codelet]
+  # user_roots:   [~/.claude, ~/.codelet]
+  # project_paths: [.claude/rules, .codelet/rules.md, AGENTS.md, CLAUDE.md]
   # local_paths:   [CLAUDE.local.md]
 ```
 
