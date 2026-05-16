@@ -10,14 +10,17 @@ It is a minimal local agent loop with:
 
 - workspace snapshot collection
 - stable prompt plus turn state
-- structured tools
-- approval handling for risky tools
+- structured tools (read, write, shell, Python, delegation, skills)
+- approval handling for risky tools, with optional YOLO auto-approval for safe commands
 - transcript and memory persistence
-- bounded delegation
+- bounded delegation and parallel sub-agent dispatch
 - **graduated compaction cascade** for context-window pressure
 - **hierarchical filesystem memory** (`CLAUDE.md` / `AGENTS.md` / `.claude/rules/`)
+- **progressive-disclosure skills** (`SKILL.md` library under `.mini-coding-agent/skills/`)
 - **session-baseline verification** to detect repo drift across runs
 - **`.env`-based configuration** for provider, key, model, and harness knobs
+- **protocol integrations** — MCP client/server, A2A HTTP server, ACP stub
+- **hardening countermeasures** — decoy tools, YOLO command classifier, undercover identity
 
 The agent supports two model backends: **Ollama** (default, local) and any **OpenAI-compatible API**. The OpenAI backend ships with convenience presets for popular custom LLM providers (**Kimi/Moonshot**, **GLM/Zhipu**, **SiliconFlow**, **DeepSeek**, **OpenRouter**, **Together**, **DashScope**, ...) so you can pick one with a single `--provider` flag.
 
@@ -44,13 +47,13 @@ This coding harness is organized around six practical building blocks:
 2. **Prompt shape and cache reuse**  
    A stable prompt prefix, which is separate from the changing request, transcript, and memory so repeated model calls can reuse the static parts efficiently.
 3. **Structured tools, validation, and permissions**  
-   The model works through named tools with checked inputs, workspace path validation, and approval gates instead of free-form arbitrary actions.
+   The model works through named tools with checked inputs, workspace path validation, and approval gates instead of free-form arbitrary actions. File edits are safe by default: `delete_file` moves to trash and `patch_file` operates on exact text blocks.
 4. **Context reduction and output management**  
    Long outputs are clipped, repeated reads are deduplicated, and older transcript entries are compressed to keep prompt size under control.
 5. **Transcripts, memory, and resumption**  
    The runtime keeps both a full durable transcript and a smaller working memory so sessions can be resumed while preserving important state via working memory.
 6. **Delegation and bounded subagents**  
-   Scoped subtasks can be delegated to helper agents that inherit enough context to help (but operate within limits).
+   Scoped subtasks can be delegated to helper agents that inherit enough context to help (but operate within limits). Parallel dispatch (`delegate_parallel`) and task decomposition (`decompose`) enable multi-agent workflows.
 
 &nbsp;
 ## Requirements
@@ -383,6 +386,12 @@ Important flags:
   path to a `.env` file with LLM provider/key/model and harness overrides; defaults to auto-discovery of `<workspace>/.env`. See [Configuring from `.env`](#configuring-from-env).
 - `--no-welcome`
   suppress the startup banner (useful for scripting or piped output)
+- `--decoy-tools`
+  inject decoy tool entries (`secret_eval`, `network_probe`, `exfiltrate`) into the prompt surface; calls are refused at runtime. See [Hardening](#hardening).
+- `--yolo`
+  auto-approve obviously-safe shell commands (`ls`, `pwd`, `cat`, `git status`, ...) when `--approval ask` is active, without prompting. See [Hardening](#hardening).
+- `--undercover`
+  replace the agent identity with a generic "helpful assistant" string and suppress the welcome banner; equivalent to `MINI_AGENT_UNDERCOVER=1`. See [Hardening](#hardening).
 
 &nbsp;
 ## Configuration via YAML
@@ -402,9 +411,9 @@ PyYAML is an optional dependency. Install with `pip install pyyaml` (or `pip ins
 
 The prompt is assembled in up to six XML-tagged layers ordered from most stable (top, cacheable) to most volatile (bottom):
 
-1. `<agent-identity>` — who the agent is. **Always present.**
+1. `<agent-identity>` — who the agent is. **Always present.** Replaced by a generic string when `--undercover` / `MINI_AGENT_UNDERCOVER=1` is active.
 2. `<system-defaults>` — immutable rules, tool catalog, response examples. **Always present.**
-3. `<project-rules>` — per-repo overrides (`AGENTS.md`, `.mini-coding-agent/rules.md`). Emitted only when content is found.
+3. `<project-rules>` — per-repo overrides (`AGENTS.md`, `.mini-coding-agent/rules.md`), selected hierarchical memory files, and the skill manifest (name + description for each discovered skill). Emitted only when content is found.
 4. `<coordinator>` — delegation/swarm guidance. Emitted only when delegation is enabled.
 5. `<override>` — volatile session overrides from YAML config or CLI. Emitted only when configured.
 6. `<workspace>` — workspace snapshot (cwd, branch, status, docs). **Always present.**
@@ -423,12 +432,151 @@ The agent exposes the following tools to the model. Tools are grouped into categ
 | `search` | `read` | no | Search the workspace with `rg` or a simple fallback |
 | `glob` | `read` | no | List workspace files matching a glob pattern (e.g. `**/*.py`) |
 | `write_file` | `write` | **yes** | Write a text file |
-| `patch_file` | `write` | **yes** | Replace one exact text block in a file |
-| `run_shell` | `bash` | **yes** | Run a shell command in the repo root |
+| `patch_file` | `write` | **yes** | Replace one exact text block in a file (in-place diff-style edit) |
+| `delete_file` | `write` | **yes** | Delete a file (moves to `.mini-coding-agent/trash/` instead of permanent deletion) |
+| `move_file` | `write` | **yes** | Move or rename a file inside the workspace |
+| `run_shell` | `bash` | **yes** | Run a shell command in the repo root (PowerShell/cmd on Windows) |
 | `run_python` | `python` | **yes** | Execute Python code in the repo root and return its output |
 | `delegate` | — | no | Ask a bounded read-only child agent to investigate |
+| `delegate_parallel` | — | no | Dispatch multiple sub-agent tasks concurrently and collect results |
+| `decompose` | — | no | Ask the agent to split a complex task into independent subtasks |
+| `load_skill` | — | no | Fetch the full body of a named skill from `.mini-coding-agent/skills/` |
+| `remember_fact` | `write` | no | Append a short fact to `.mini-coding-agent/repo-memory.md` |
 
 Risky tools require approval. The approval mode (`--approval`) controls whether the user is prompted (`ask`), the action is allowed automatically (`auto`), or it is always denied (`never`).
+
+&nbsp;
+## Progressive-Disclosure Skills
+
+Skills are reusable prompt snippets stored under `.mini-coding-agent/skills/<name>/SKILL.md`. At startup, only the name and one-line description of each skill are injected into the system prompt. The model calls `load_skill(name)` to retrieve the full body on demand — keeping the baseline prompt small while making complex procedures available.
+
+A skill directory looks like:
+
+```
+.mini-coding-agent/skills/
+  changelog-writer/
+    SKILL.md           ← required; YAML front-matter + body
+    template.md        ← optional sibling assets
+```
+
+`SKILL.md` minimal structure:
+
+```markdown
+---
+name: changelog-writer
+description: Generate a CHANGELOG.md entry from recent git history.
+---
+## Instructions
+Use `git log --oneline` to list recent commits ...
+```
+
+If no front-matter is present the directory name is used as `name` and the
+first non-blank line is used as `description`.
+
+&nbsp;
+## Parallel Delegation
+
+Two tools handle multi-agent workloads:
+
+- **`decompose`** — the agent announces that it is splitting a complex task into a list of independent subtasks. The host records them and the agent works through them sequentially.
+- **`delegate_parallel`** — dispatch up to `harness.delegate_parallel_max_workers` (default: `4`) sub-agent tasks concurrently in a thread pool. Each task runs a fresh child agent that inherits the parent workspace; results are collected and returned as JSON.
+
+Both tools respect the depth guard (`harness.max_depth`, default `1`): sub-agents cannot themselves spawn further parallel agents, preventing runaway recursion.
+
+&nbsp;
+## Protocol Integrations
+
+The `mini_coding_agent.protocols` subpackage provides lightweight, stdlib-only adapters so the agent can talk to the wider LLM ecosystem. All three modules can be imported independently.
+
+### MCP — Model Context Protocol
+
+```python
+from mini_coding_agent.protocols import MCPClient, register_mcp_tools, serve_mcp_stdio
+
+# Consume tools from an external MCP server
+client = MCPClient(command=["npx", "-y", "@some/mcp-server"])
+client.start()
+# Tools are registered as  mcp__<server>__<tool>  in the agent's registry
+
+# Expose the agent's own tools to an MCP host
+serve_mcp_stdio(agent)  # communicates over stdin/stdout
+```
+
+Server discovery uses `~/.mini-coding-agent/mcp.json` or `<workspace>/.mini-coding-agent/mcp.json`:
+
+```json
+{
+  "servers": {
+    "my-tools": {
+      "command": ["python", "-m", "my_mcp_server"],
+      "env": {},
+      "timeout": 10.0
+    }
+  }
+}
+```
+
+Registered MCP tools appear in the prompt as `mcp__<server>__<tool>` and behave like native tools (approval, timeout, output clipping all apply).
+
+### A2A — Agent-to-Agent
+
+```python
+from mini_coding_agent.protocols import serve_a2a_blocking, build_agent_card
+
+# Serve the agent over HTTP so other agents can call it
+serve_a2a_blocking(agent, host="0.0.0.0", port=8080)
+```
+
+- `GET /.well-known/agent.json` — returns the agent card (name, description, capabilities)
+- `POST /tasks/send` `{"id": "...", "message": "..."}` — runs a one-shot task and returns `{"id": "...", "status": "completed", "result": "..."}`
+
+### ACP — Agent Communication Protocol
+
+`ACPSessionStub` provides the message-shape dataclass for experimentation. The full protocol is not bundled; swap `protocols/acp.py` for the upstream reference implementation when needed.
+
+&nbsp;
+## Hardening
+
+Three optional countermeasures are available via CLI flags or config, inspired by patterns observed in production coding agents.
+
+### Decoy tools (`--decoy-tools`)
+
+Inject three fake tool entries (`secret_eval`, `network_probe`, `exfiltrate`) into the system prompt. Any call to a decoy is refused at runtime with a safety-policy message. The goal is to make prompt-extraction and distillation attacks harder: an attacker reading the prompt sees a tool surface that does not actually work.
+
+Enable via flag:
+```bash
+uv run mini-coding-agent --decoy-tools
+```
+
+Or via config:
+```yaml
+harness:
+  decoy_tools: true
+```
+
+### YOLO command classifier (`--yolo`)
+
+When `--approval ask` is active, the agent normally prompts before every `run_shell` call. With `--yolo`, trivially safe commands (`ls`, `pwd`, `cat`, `git status`, `git log`, `python --version`, ...) are auto-approved without a prompt. Commands containing shell metacharacters (`;`, `|`, `&`, `` ` ``, `$`, `>`, `<`, `\`) or anything outside the explicit safelist are still gated normally.
+
+```bash
+uv run mini-coding-agent --yolo
+```
+
+Or via config:
+```yaml
+harness:
+  yolo_classifier: true
+```
+
+### Undercover identity (`--undercover`)
+
+Replace the agent's `<agent-identity>` layer with a generic "helpful assistant" string and suppress the welcome banner. Equivalent to setting `MINI_AGENT_UNDERCOVER=1` in the environment. Useful for benchmark and eval runs where you do not want the model to recognise the harness.
+
+```bash
+uv run mini-coding-agent --undercover
+# or
+MINI_AGENT_UNDERCOVER=1 uv run mini-coding-agent
+```
 
 &nbsp;
 ## Example
