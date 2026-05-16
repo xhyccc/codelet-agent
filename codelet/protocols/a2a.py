@@ -66,6 +66,7 @@ def _card_to_a2a_dict(card: A2AAgentCard) -> dict:
     )
     for skill in card.skills:
         a2a_skill = _A2ASkill(
+            # A2AAgentCard skills only carry a "name"; use it as the id too.
             id=skill.get("name", ""),
             name=skill.get("name", ""),
             description=skill.get("description", ""),

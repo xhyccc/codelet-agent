@@ -73,7 +73,10 @@ class ACPSessionStub:
         for msg in self._messages:
             # Concatenate all text parts into a single content string.
             content = "".join(
-                (p.content or "") for p in msg.parts if p.content_type in (None, "text/plain", "")
+                (p.content or "") for p in msg.parts
+                # Include plain-text parts (content_type may be None, "text/plain",
+                # or "" when the sender omits the MIME type).
+                if p.content_type in (None, "text/plain", "")
             )
             turn: Dict[str, Any] = {"role": msg.role, "content": content}
             result.append(turn)

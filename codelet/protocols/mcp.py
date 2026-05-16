@@ -58,6 +58,8 @@ class MCPClient:
 
     def __init__(self, name: str, command: List[str], env: Optional[Dict[str, str]] = None,
                  cwd: Optional[str] = None, timeout: float = 10.0):
+        if not command:
+            raise MCPClientError("command must be a non-empty list")
         self.name = name
         self._command = command[0] if command else ""
         self._args = list(command[1:]) if len(command) > 1 else []
