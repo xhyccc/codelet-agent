@@ -109,15 +109,15 @@ The default in this project is `qwen3.5:4b`. If you have sufficient memory, it i
 Clone the repo or your fork and change into it:
 
 ```bash
-git clone https://github.com/xhyccc/codelet-agent.git
-cd codelet-agent
+git clone https://github.com/xhyccc/codelet-agent.git codelet
+cd codelet
 ```
 
 If you forked it first, use your fork URL instead:
 
 ```bash
-git clone https://github.com/<your-github-user>/codelet-agent.git
-cd codelet-agent
+git clone https://github.com/<your-github-user>/codelet-agent.git codelet
+cd codelet
 ```
 
 
