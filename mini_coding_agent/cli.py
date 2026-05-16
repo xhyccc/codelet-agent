@@ -95,6 +95,17 @@ def build_agent(args):
     if not getattr(args, "_sandbox_explicit", False) and harness_cfg.get("sandbox"):
         args.sandbox = harness_cfg["sandbox"]
 
+    # Phase-6 hardening flags: CLI > config. We mutate the config in place so
+    # MiniAgent's __init__ picks them up uniformly through harness.* settings.
+    if getattr(args, "decoy_tools", False):
+        harness_cfg["decoy_tools"] = True
+        config["harness"] = harness_cfg
+    if getattr(args, "yolo", False):
+        harness_cfg["yolo_classifier"] = True
+        config["harness"] = harness_cfg
+    if getattr(args, "undercover", False):
+        os.environ["MINI_AGENT_UNDERCOVER"] = "1"
+
     preset = resolve_provider_preset(args.provider) if getattr(args, "provider", None) else None
     if preset is not None:
         args.backend = "openai"
@@ -248,6 +259,12 @@ def build_arg_parser():
     parser.add_argument("--temperature", type=float, default=argparse.SUPPRESS, help="Sampling temperature.")
     parser.add_argument("--top-p", type=float, default=argparse.SUPPRESS, help="Top-p nucleus sampling value.")
     parser.add_argument("--no-welcome", action="store_true", default=False, help="Suppress the welcome banner at startup.")
+    parser.add_argument("--decoy-tools", action="store_true", default=False,
+                        help="Inject decoy tool entries into the prompt (anti-distillation; calls are refused).")
+    parser.add_argument("--yolo", action="store_true", default=False,
+                        help="Auto-approve obviously-safe shell commands (ls/pwd/cat/git status/...) when approval=ask.")
+    parser.add_argument("--undercover", action="store_true", default=False,
+                        help="Use a generic helpful-assistant identity and suppress the welcome banner. Equivalent to MINI_AGENT_UNDERCOVER=1.")
     return parser
 
 
@@ -298,7 +315,7 @@ def main(argv=None):
     backend_label = args.backend
     if getattr(args, "provider", None):
         backend_label = f"{args.backend} ({args.provider})"
-    if not args.no_welcome:
+    if not args.no_welcome and not getattr(args, "undercover", False):
         print(build_welcome(agent, model=args.model, backend=backend_label))
 
     if args.prompt:

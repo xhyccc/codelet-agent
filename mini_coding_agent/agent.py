@@ -103,6 +103,15 @@ class MiniAgent:
         self.skills = skills_module.discover_skills(self.workspace.repo_root)
         self._subdir_memory_loaded = set()
         self.tools = self.registry.build()
+        # Optional hardening: inject decoy tools so the model surface area
+        # advertised in the prompt does not match the *real* runtime
+        # surface area.  Enabled via harness.decoy_tools=true in config.
+        from . import hardening as hardening_module
+        harness_cfg = self.config.get("harness", {}) or {}
+        if harness_cfg.get("decoy_tools"):
+            specs = harness_cfg.get("decoy_tool_specs") or ()
+            hardening_module.apply_decoy_tools(self.tools, specs)
+        self._hardening = hardening_module
 
         # Pull project rules text from workspace files declared in config.
         project_rules_text = load_project_rules(
@@ -135,8 +144,15 @@ class MiniAgent:
             manifest = skills_module.render_skill_manifest(self.skills)
             if manifest:
                 project_rules_text = (project_rules_text + "\n\n" + manifest).strip()
+        # Undercover mode: if MINI_AGENT_UNDERCOVER=1, replace the identity
+        # layer with a generic helpful-assistant string before the prefix
+        # is assembled.  This is intentionally cheap so eval runs do not
+        # need a separate config file.
+        prompts_cfg = self.config.get("prompts", {}) or {}
+        if hardening_module.undercover_enabled():
+            prompts_cfg = hardening_module.apply_undercover_identity(prompts_cfg)
         self.prefix = build_prefix(
-            self.config.get("prompts", {}),
+            prompts_cfg,
             self.tools,
             self.workspace.text(),
             project_rules_text=project_rules_text,
@@ -453,6 +469,12 @@ class MiniAgent:
             return True
         if self.approval_policy == "never":
             return False
+        # YOLO classifier: when enabled, auto-approve obviously-safe shell
+        # commands so the agent does not nag on harmless `ls`/`pwd` calls.
+        harness_cfg = self.config.get("harness", {}) or {}
+        if harness_cfg.get("yolo_classifier") and name == "run_shell":
+            if self._hardening.is_safe_command(str(args.get("command", ""))):
+                return True
         try:
             answer = input(f"approve {name} {json.dumps(args, ensure_ascii=True)}? [y/N] ")
         except EOFError:
