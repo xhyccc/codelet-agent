@@ -161,6 +161,25 @@ class ToolRegistry:
                 "description": "Ask a bounded read-only child agent to investigate.",
                 "run": self.tool_delegate,
             }
+            tools["delegate_parallel"] = {
+                "schema": {"tasks": "list[str]", "max_steps": "int=3"},
+                "risky": False,
+                "description": (
+                    "Run multiple bounded read-only child agents in parallel. "
+                    "Each task is a string; returns a JSON list of {task, result}."
+                ),
+                "run": self.tool_delegate_parallel,
+            }
+        tools["decompose"] = {
+            "schema": {"goal": "str"},
+            "risky": False,
+            "description": (
+                "Record a plan that breaks the user's goal into ordered steps. "
+                "Pass a goal string; returns an acknowledgement and saves the plan "
+                "to session['plan']."
+            ),
+            "run": self.tool_decompose,
+        }
         return tools
 
     # ---- read tools -----------------------------------------------------
@@ -443,6 +462,95 @@ class ToolRegistry:
         child.session["memory"]["notes"] = [agent.history_text()[:300]]
         return "delegate_result:\n" + child.ask(task)
 
+    def tool_delegate_parallel(self, args):
+        """Spawn multiple read-only child agents concurrently.
+
+        Children share the model_client, but each gets its own session and
+        memory. Results are aggregated as a JSON array. A failure in one
+        task is reported as ``{"task": ..., "error": "..."}`` and does not
+        cancel the rest.
+        """
+        agent = self.agent
+        if agent.depth >= agent.max_depth:
+            raise ValueError("delegate_parallel depth exceeded")
+        tasks = args.get("tasks") or []
+        if isinstance(tasks, str):
+            # Best-effort: split a single string on newlines.
+            tasks = [line.strip() for line in tasks.splitlines() if line.strip()]
+        if not isinstance(tasks, list) or not tasks:
+            raise ValueError("tasks must be a non-empty list of strings")
+        tasks = [str(item).strip() for item in tasks if str(item).strip()]
+        if not tasks:
+            raise ValueError("tasks must contain at least one non-empty entry")
+        # Cap parallelism so we never blow up the upstream rate limit.
+        harness = agent.config.get("harness", {})
+        max_workers = int(harness.get("delegate_parallel_max_workers", 4))
+        import json as _json
+        import concurrent.futures
+        from .agent import MiniAgent
+
+        def _run_one(task_text):
+            try:
+                child = MiniAgent(
+                    model_client=agent.model_client,
+                    workspace=agent.workspace,
+                    session_store=agent.session_store,
+                    approval_policy="never",
+                    max_steps=int(args.get("max_steps", 3)),
+                    max_new_tokens=agent.max_new_tokens,
+                    depth=agent.depth + 1,
+                    max_depth=agent.max_depth,
+                    read_only=True,
+                    allowed_ops=agent.allowed_ops,
+                    sandbox=agent.sandbox,
+                    config=agent.config,
+                )
+                child.session["memory"]["task"] = task_text
+                return {"task": task_text, "result": child.ask(task_text)}
+            except Exception as exc:  # noqa: BLE001 - we surface as data
+                return {"task": task_text, "error": str(exc)}
+
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [pool.submit(_run_one, t) for t in tasks]
+            # Preserve input ordering for determinism.
+            for fut in futures:
+                results.append(fut.result())
+        # Persist a snapshot of the parallel-delegation run for auditing.
+        try:
+            log_dir = agent.root / ".mini-coding-agent" / "delegated"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / f"{uuid.uuid4().hex[:8]}.json"
+            log_path.write_text(_json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            # Logging is best-effort; never let it block the return value.
+            pass
+        return "delegate_parallel_result:\n" + _json.dumps(results, ensure_ascii=False, indent=2)
+
+    def tool_decompose(self, args):
+        """Persist a plan that breaks the user's goal into ordered steps."""
+        agent = self.agent
+        goal = str(args.get("goal", "")).strip()
+        if not goal:
+            raise ValueError("goal must not be empty")
+        steps = args.get("steps")
+        if isinstance(steps, str):
+            steps = [line.strip(" -*\t") for line in steps.splitlines() if line.strip()]
+        if not isinstance(steps, list):
+            # Auto-decompose: a deterministic fallback so the tool is always
+            # usable even when the model only supplies a goal. Heuristic:
+            # split on sentences / explicit numbering. The agent is expected
+            # to refine the plan through subsequent calls.
+            import re as _re
+            chunks = _re.split(r"(?:\n+|\s*(?:->|=>|;|\.\s))", goal)
+            steps = [chunk.strip() for chunk in chunks if chunk.strip()]
+            if len(steps) < 2:
+                steps = [goal]
+        agent.session["plan"] = {"goal": goal, "steps": steps}
+        agent.session_path = agent.session_store.save(agent.session)
+        bullet_lines = "\n".join(f"  {idx + 1}. {step}" for idx, step in enumerate(steps))
+        return f"plan recorded for goal: {goal}\n{bullet_lines}"
+
 
 def tool_argument_validators(agent, name, args):
     """Validate `args` for the named tool. Raises ValueError on bad input."""
@@ -537,6 +645,22 @@ def tool_argument_validators(agent, name, args):
             raise ValueError("src does not exist")
         if dst.exists():
             raise ValueError("dst already exists")
+        return
+
+    if name == "decompose":
+        goal = str(args.get("goal", "")).strip()
+        if not goal:
+            raise ValueError("goal must not be empty")
+        return
+
+    if name == "delegate_parallel":
+        if agent.depth >= agent.max_depth:
+            raise ValueError("delegate_parallel depth exceeded")
+        tasks = args.get("tasks")
+        if isinstance(tasks, str):
+            tasks = [line.strip() for line in tasks.splitlines() if line.strip()]
+        if not isinstance(tasks, list) or not tasks:
+            raise ValueError("tasks must be a non-empty list of strings")
         return
 
     if name == "run_python":
