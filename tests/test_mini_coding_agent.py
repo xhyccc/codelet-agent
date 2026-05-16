@@ -163,7 +163,9 @@ def test_patch_file_replaces_exact_match(tmp_path):
         },
     )
 
-    assert result == "patched sample.txt"
+    assert result.startswith("patched sample.txt")
+    assert "-hello world" in result
+    assert "+hello agent" in result
     assert file_path.read_text(encoding="utf-8") == "hello agent\n"
 
 

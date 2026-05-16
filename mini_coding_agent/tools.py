@@ -7,10 +7,15 @@ so it can access the workspace and sandbox configuration.
 """
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import uuid
+from difflib import unified_diff
+from pathlib import Path
 
 from .sandbox import (
     sandbox_check_python,
@@ -32,6 +37,40 @@ def _scrub_subprocess_text(text, *, limit):
     if not text:
         return text
     return clip_head_tail(dedupe_lines(strip_ansi(text)), limit)
+
+
+def _render_diff(before, after, label, *, max_lines=40):
+    """Render a small unified diff between two strings for tool feedback."""
+    lines = list(
+        unified_diff(
+            before.splitlines(),
+            after.splitlines(),
+            fromfile=label,
+            tofile=label,
+            n=2,
+            lineterm="",
+        )
+    )
+    if not lines:
+        return ""
+    if len(lines) > max_lines:
+        head = lines[: max_lines - 4]
+        tail = lines[-4:]
+        return "\n".join(head + [f"... [{len(lines) - max_lines} more diff lines clipped] ..."] + tail)
+    return "\n".join(lines)
+
+
+def _is_windows():
+    return platform.system().lower().startswith("win")
+
+
+def _windows_shell_command(command):
+    """Wrap a command for Windows: prefer PowerShell, else cmd.exe."""
+    if shutil.which("pwsh"):
+        return ["pwsh", "-NoLogo", "-NoProfile", "-Command", command]
+    if shutil.which("powershell"):
+        return ["powershell", "-NoLogo", "-NoProfile", "-Command", command]
+    return ["cmd.exe", "/C", command]
 
 
 class ToolRegistry:
@@ -92,6 +131,21 @@ class ToolRegistry:
                 "risky": True,
                 "description": "Replace one exact text block in a file.",
                 "run": self.tool_patch_file,
+            }
+            tools["delete_file"] = {
+                "schema": {"path": "str"},
+                "risky": True,
+                "description": (
+                    "Move a file or empty directory into the workspace trash "
+                    "(.mini-coding-agent/trash/<session-id>/). Reversible."
+                ),
+                "run": self.tool_delete_file,
+            }
+            tools["move_file"] = {
+                "schema": {"src": "str", "dst": "str"},
+                "risky": True,
+                "description": "Rename or move a file within the workspace.",
+                "run": self.tool_move_file,
             }
         if "python" in allowed:
             tools["run_python"] = {
@@ -214,15 +268,29 @@ class ToolRegistry:
             if preexec is not None:
                 sandbox_kwargs["preexec_fn"] = preexec
 
-        result = subprocess.run(
-            command,
-            cwd=agent.root,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            **sandbox_kwargs,
-        )
+        if _is_windows():
+            # PowerShell preferred; cmd.exe fallback. preexec_fn / rlimits
+            # are POSIX-only and have already been gated out by
+            # sandbox_preexec() returning None on Windows.
+            argv = _windows_shell_command(command)
+            result = subprocess.run(
+                argv,
+                cwd=agent.root,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                **{k: v for k, v in sandbox_kwargs.items() if k != "preexec_fn"},
+            )
+        else:
+            result = subprocess.run(
+                command,
+                cwd=agent.root,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                **sandbox_kwargs,
+            )
         tool_out_cfg = (harness.get("tool_output") or {})
         out_limit = int(tool_out_cfg.get("max_chars", harness.get("max_tool_output", 4000)))
         return "\n".join(
@@ -306,8 +374,45 @@ class ToolRegistry:
         count = text.count(old_text)
         if count != 1:
             raise ValueError(f"old_text must occur exactly once, found {count}")
-        path.write_text(text.replace(old_text, str(args["new_text"]), 1), encoding="utf-8")
-        return f"patched {path.relative_to(agent.root)}"
+        new_text = str(args["new_text"])
+        updated = text.replace(old_text, new_text, 1)
+        path.write_text(updated, encoding="utf-8")
+        rel = path.relative_to(agent.root)
+        diff = _render_diff(text, updated, str(rel))
+        return f"patched {rel}\n{diff}" if diff else f"patched {rel}"
+
+    def _trash_dir(self):
+        agent = self.agent
+        session_id = (agent.session or {}).get("id", "unknown")
+        trash = agent.root / ".mini-coding-agent" / "trash" / session_id
+        trash.mkdir(parents=True, exist_ok=True)
+        return trash
+
+    def tool_delete_file(self, args):
+        agent = self.agent
+        path = agent.path(args["path"])
+        if not path.exists():
+            raise ValueError("path does not exist")
+        if path.is_dir() and any(path.iterdir()):
+            raise ValueError("directory is not empty (refusing to recurse)")
+        trash = self._trash_dir()
+        rel = path.relative_to(agent.root)
+        stamp = time.strftime("%Y%m%dT%H%M%S")
+        target = trash / f"{stamp}-{uuid.uuid4().hex[:6]}-{path.name}"
+        shutil.move(str(path), str(target))
+        return f"trashed {rel} -> {target.relative_to(agent.root)}"
+
+    def tool_move_file(self, args):
+        agent = self.agent
+        src = agent.path(args["src"])
+        dst = agent.path(args["dst"])
+        if not src.exists():
+            raise ValueError("src does not exist")
+        if dst.exists():
+            raise ValueError("dst already exists")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return f"moved {src.relative_to(agent.root)} -> {dst.relative_to(agent.root)}"
 
     # ---- delegation -----------------------------------------------------
 
@@ -415,6 +520,23 @@ def tool_argument_validators(agent, name, args):
         task = str(args.get("task", "")).strip()
         if not task:
             raise ValueError("task must not be empty")
+        return
+
+    if name == "delete_file":
+        path = agent.path(args["path"])
+        if not path.exists():
+            raise ValueError("path does not exist")
+        if path.is_dir() and any(path.iterdir()):
+            raise ValueError("directory is not empty (refusing to recurse)")
+        return
+
+    if name == "move_file":
+        src = agent.path(args["src"])
+        dst = agent.path(args["dst"])
+        if not src.exists():
+            raise ValueError("src does not exist")
+        if dst.exists():
+            raise ValueError("dst already exists")
         return
 
     if name == "run_python":
