@@ -1,17 +1,12 @@
-"""Minimal Model Context Protocol (MCP) client + server.
+"""Model Context Protocol (MCP) client + server.
 
-We deliberately implement only the subset of MCP needed for tool I/O:
+Uses the official ``mcp`` PyPI package for protocol handling.
 
-* ``initialize`` handshake
-* ``tools/list``
-* ``tools/call``
+* :class:`MCPClient` - synchronous wrapper around the async
+  ``mcp.ClientSession``.  Launches a server subprocess, drives the
+  ``initialize`` handshake, lists tools, and proxies tool calls.
 
-This keeps the agent dependency-free.  Production users who need the full
-protocol (resources, prompts, sampling, subscriptions) should install the
-official ``mcp`` PyPI package and swap this module out.
-
-Wire format: line-delimited JSON-RPC 2.0 over stdio (stdin/stdout).  This
-is the original MCP transport.
+Wire format: line-delimited JSON-RPC 2.0 over stdio (stdin/stdout).
 
 Config: by default we look for ``.mini-coding-agent/mcp.json`` in the
 workspace root.  Schema::
@@ -29,14 +24,17 @@ to the agent as ``mcp__<server>__<tool>`` so namespaces never collide.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import json
-import os
-import subprocess
 import threading
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from mcp import ClientSession
+from mcp import types as mcp_types
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 
 class MCPClientError(RuntimeError):
@@ -44,86 +42,98 @@ class MCPClientError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
-# Client (stdio JSON-RPC)
+# Client  (synchronous façade over the official async mcp.ClientSession)
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class _PendingRequest:
-    event: threading.Event = field(default_factory=threading.Event)
-    response: Optional[dict] = None
-
-
 class MCPClient:
-    """A tiny synchronous MCP client speaking line-delimited JSON-RPC 2.0.
+    """Synchronous MCP client backed by the official ``mcp`` SDK.
 
-    The client launches the server as a subprocess, drives the
-    ``initialize`` handshake, lists tools, and proxies tool calls.  A
-    background reader thread routes incoming responses to the matching
-    request id.  All public methods are synchronous and thread-safe at
-    the request granularity.
+    The client launches the server as a subprocess and drives the
+    ``initialize`` handshake via the official :class:`mcp.ClientSession`.
+    An asyncio event-loop runs in a background daemon thread; all public
+    methods are synchronous and submit coroutines to that loop via
+    :func:`asyncio.run_coroutine_threadsafe`.
     """
 
     def __init__(self, name: str, command: List[str], env: Optional[Dict[str, str]] = None,
                  cwd: Optional[str] = None, timeout: float = 10.0):
         self.name = name
-        self.command = list(command)
-        self.env = env
-        self.cwd = cwd
+        self._command = command[0] if command else ""
+        self._args = list(command[1:]) if len(command) > 1 else []
+        self._env = env
+        self._cwd = str(cwd) if cwd else None
         self.timeout = timeout
-        self._proc: Optional[subprocess.Popen] = None
-        self._next_id = 0
-        self._lock = threading.Lock()
-        self._pending: Dict[int, _PendingRequest] = {}
-        self._reader: Optional[threading.Thread] = None
-        self._stopped = threading.Event()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        self._session: Optional[ClientSession] = None
+        self._stdio_exit_fn: Any = None
+        self._session_exit_fn: Any = None
 
     # ---- lifecycle ------------------------------------------------------
 
+    def _run_loop(self) -> None:
+        assert self._loop is not None
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    async def _async_start(self) -> None:
+        server_params = StdioServerParameters(
+            command=self._command,
+            args=self._args,
+            env=self._env,
+            cwd=self._cwd,
+        )
+        stdio_cm = stdio_client(server_params)
+        read, write = await stdio_cm.__aenter__()
+        self._stdio_exit_fn = stdio_cm.__aexit__
+        session_cm = ClientSession(read, write)
+        self._session = await session_cm.__aenter__()
+        self._session_exit_fn = session_cm.__aexit__
+        await self._session.initialize()
+
+    async def _async_stop(self) -> None:
+        for fn in (self._session_exit_fn, self._stdio_exit_fn):
+            if fn is not None:
+                try:
+                    await fn(None, None, None)
+                except Exception:
+                    pass
+        self._session_exit_fn = None
+        self._stdio_exit_fn = None
+        self._session = None
+
     def start(self) -> None:
-        if self._proc is not None:
+        if self._loop is not None:
             return
-        full_env = dict(os.environ)
-        if self.env:
-            full_env.update(self.env)
-        self._proc = subprocess.Popen(
-            self.command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=full_env,
-            cwd=self.cwd,
-            text=True,
-            bufsize=1,
-        )
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
-        self._reader.start()
-        # MCP handshake: client sends `initialize`, server responds with its
-        # capabilities. We send minimal capability advertisement.
-        self.request(
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "clientInfo": {"name": "mini-coding-agent", "version": "0.x"},
-            },
-        )
-        # MCP says clients SHOULD send `initialized` notification after.
-        self._notify("notifications/initialized", {})
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+        future = asyncio.run_coroutine_threadsafe(self._async_start(), self._loop)
+        try:
+            future.result(timeout=self.timeout)
+        except concurrent.futures.TimeoutError as exc:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            raise MCPClientError("timeout waiting for initialize") from exc
+        except Exception as exc:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            raise MCPClientError(str(exc)) from exc
 
     def stop(self) -> None:
-        self._stopped.set()
-        if self._proc is None:
+        if self._loop is None:
             return
-        try:
-            self._proc.terminate()
-            self._proc.wait(timeout=2.0)
-        except Exception:
+        loop = self._loop
+        self._loop = None
+        if self._session is not None:
+            future = asyncio.run_coroutine_threadsafe(self._async_stop(), loop)
             try:
-                self._proc.kill()
+                future.result(timeout=2.0)
             except Exception:
                 pass
-        self._proc = None
+        loop.call_soon_threadsafe(loop.stop)
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
 
     def __enter__(self):
         self.start()
@@ -133,74 +143,45 @@ class MCPClient:
         self.stop()
         return False
 
-    # ---- transport ------------------------------------------------------
+    # ---- internal helpers ----------------------------------------------
 
-    def _send(self, payload: dict) -> None:
-        if self._proc is None or self._proc.stdin is None:
+    def _submit(self, coro: Any) -> Any:
+        """Submit *coro* to the background event loop and block for its result."""
+        if self._loop is None or self._session is None:
             raise MCPClientError("server not started")
-        line = json.dumps(payload, ensure_ascii=False) + "\n"
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
-            self._proc.stdin.write(line)
-            self._proc.stdin.flush()
-        except (BrokenPipeError, ValueError) as exc:
-            raise MCPClientError(f"send failed: {exc}") from exc
-
-    def _read_loop(self) -> None:
-        assert self._proc is not None
-        stdout = self._proc.stdout
-        if stdout is None:
-            return
-        while not self._stopped.is_set():
-            line = stdout.readline()
-            if not line:
-                break
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            req_id = msg.get("id")
-            if req_id is None:
-                # Server-initiated notification; ignore for now.
-                continue
-            with self._lock:
-                pending = self._pending.pop(req_id, None)
-            if pending is not None:
-                pending.response = msg
-                pending.event.set()
-
-    def _notify(self, method: str, params: dict) -> None:
-        self._send({"jsonrpc": "2.0", "method": method, "params": params})
-
-    def request(self, method: str, params: Optional[dict] = None) -> Any:
-        with self._lock:
-            req_id = self._next_id
-            self._next_id += 1
-            pending = _PendingRequest()
-            self._pending[req_id] = pending
-        payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}}
-        self._send(payload)
-        if not pending.event.wait(timeout=self.timeout):
-            with self._lock:
-                self._pending.pop(req_id, None)
-            raise MCPClientError(f"timeout waiting for {method}")
-        msg = pending.response or {}
-        if "error" in msg:
-            raise MCPClientError(f"{method}: {msg['error']}")
-        return msg.get("result")
+            return future.result(timeout=self.timeout)
+        except concurrent.futures.TimeoutError as exc:
+            raise MCPClientError("timeout") from exc
+        except Exception as exc:
+            raise MCPClientError(str(exc)) from exc
 
     # ---- high-level API ------------------------------------------------
 
     def list_tools(self) -> List[dict]:
-        result = self.request("tools/list", {})
-        if isinstance(result, dict):
-            return list(result.get("tools") or [])
-        return list(result or [])
+        """Return the server's tool list as plain dicts."""
+        result: mcp_types.ListToolsResult = self._submit(self._session.list_tools())
+        return [
+            {
+                "name": t.name,
+                "description": t.description or "",
+                "inputSchema": t.inputSchema if isinstance(t.inputSchema, dict) else {},
+            }
+            for t in result.tools
+        ]
 
     def call_tool(self, name: str, arguments: Optional[dict] = None) -> Any:
-        return self.request("tools/call", {"name": name, "arguments": arguments or {}})
+        """Call a tool and return the raw MCP result as a plain dict."""
+        result: mcp_types.CallToolResult = self._submit(
+            self._session.call_tool(name, arguments or {})
+        )
+        return {
+            "content": [
+                {"type": c.type, "text": getattr(c, "text", "")}
+                for c in result.content
+            ]
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -321,11 +302,15 @@ class MCPServerHandle:
 def serve_mcp_stdio(agent, *, stdin=None, stdout=None, blocking: bool = True) -> Optional[MCPServerHandle]:
     """Expose ``agent.tools`` as an MCP server over stdio.
 
+    Uses the official ``mcp`` package types (:mod:`mcp.types`) for all
+    protocol message construction.  The transport layer is a simple
+    line-delimited JSON loop so that callers can inject custom
+    ``stdin``/``stdout`` objects (e.g. :class:`io.StringIO`) for testing.
+
     When ``blocking=True`` the call returns only when stdin closes.  When
     ``blocking=False`` a background thread is started and a handle is
     returned for graceful shutdown.  ``stdin`` / ``stdout`` default to
-    ``sys.stdin`` / ``sys.stdout``; tests can pass file-like objects to
-    drive the server end-to-end without subprocesses.
+    ``sys.stdin`` / ``sys.stdout``.
     """
     import sys as _sys
 
@@ -339,44 +324,55 @@ def serve_mcp_stdio(agent, *, stdin=None, stdout=None, blocking: bool = True) ->
         params = msg.get("params") or {}
 
         if method == "initialize":
+            result = mcp_types.InitializeResult(
+                protocolVersion=mcp_types.LATEST_PROTOCOL_VERSION,
+                capabilities=mcp_types.ServerCapabilities(
+                    tools=mcp_types.ToolsCapability(),
+                ),
+                serverInfo=mcp_types.Implementation(name="mini-coding-agent", version="0.x"),
+            )
             return {
                 "jsonrpc": "2.0", "id": req_id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "mini-coding-agent", "version": "0.x"},
-                },
+                "result": result.model_dump(by_alias=True, exclude_none=True),
             }
         if method == "notifications/initialized":
-            return None  # notification - no response
+            return None  # notification – no response
         if method == "tools/list":
-            tools = []
-            for name, spec in agent.tools.items():
-                tools.append({
-                    "name": name,
-                    "description": spec.get("description", ""),
-                    "inputSchema": {
+            tools = [
+                mcp_types.Tool(
+                    name=name,
+                    description=spec.get("description", ""),
+                    inputSchema={
                         "type": "object",
                         "properties": {
                             k: {"type": "string", "description": str(v)}
                             for k, v in (spec.get("schema") or {}).items()
                         },
                     },
-                })
-            return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}}
+                )
+                for name, spec in agent.tools.items()
+            ]
+            result = mcp_types.ListToolsResult(tools=tools)
+            return {
+                "jsonrpc": "2.0", "id": req_id,
+                "result": result.model_dump(by_alias=True, exclude_none=True),
+            }
         if method == "tools/call":
             tool_name = params.get("name")
             arguments = params.get("arguments") or {}
             try:
-                result = agent.run_tool(tool_name, arguments)
+                tool_result = agent.run_tool(tool_name, arguments)
             except Exception as exc:  # noqa: BLE001 - surface as error
                 return {
                     "jsonrpc": "2.0", "id": req_id,
                     "error": {"code": -32000, "message": str(exc)},
                 }
+            call_result = mcp_types.CallToolResult(
+                content=[mcp_types.TextContent(type="text", text=str(tool_result))],
+            )
             return {
                 "jsonrpc": "2.0", "id": req_id,
-                "result": {"content": [{"type": "text", "text": str(result)}]},
+                "result": call_result.model_dump(by_alias=True, exclude_none=True),
             }
         # Unknown method
         return {
@@ -393,8 +389,10 @@ def serve_mcp_stdio(agent, *, stdin=None, stdout=None, blocking: bool = True) ->
             if not line:
                 continue
             try:
+                # Validate incoming message using official mcp types.
+                mcp_types.JSONRPCMessage.model_validate_json(line)
                 msg = json.loads(line)
-            except json.JSONDecodeError:
+            except Exception:  # noqa: BLE001
                 continue
             response = _handle(msg)
             if response is not None:

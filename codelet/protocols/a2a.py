@@ -1,17 +1,18 @@
-"""Minimal Agent-to-Agent (A2A) HTTP server.
+"""Agent-to-Agent (A2A) HTTP server.
 
-This is a small dependency-free server that publishes:
+Uses the official ``a2a-sdk`` package for agent-card and message types.
+The HTTP transport is provided by the stdlib :class:`http.server` so no
+additional ASGI framework is required.
 
-* ``GET /.well-known/agent.json`` - the agent card describing what this
-  agent can do.
-* ``POST /tasks/send`` - JSON-RPC-style "send a task" endpoint.  The
-  request body is ``{"id":"...", "message": "..."}``; the response is
-  ``{"id":"...", "status":"completed", "result":"..."}``.
+Published endpoints:
 
-The shape is intentionally a *very* lean subset of the A2A spec --
-enough to demonstrate cross-agent calls and to be wired up to a more
-complete implementation later.  No auth.  No streaming.  Single thread
-per connection via the stdlib ``http.server``.
+* ``GET /.well-known/agent.json`` – the agent card (``a2a.types.AgentCard``).
+* ``POST /tasks/send`` – JSON-RPC-style "send a task" endpoint.
+  Request body: ``{"id":"...", "message": "..."}``;
+  Response: ``{"id":"...", "status":"completed", "result":"..."}``.
+
+No auth.  No streaming.  Single thread per connection via the stdlib
+``http.server``.
 """
 
 from __future__ import annotations
@@ -21,6 +22,10 @@ import threading
 from dataclasses import asdict, dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional
+
+from a2a.types import AgentCard as _A2ACard
+from a2a.types import AgentSkill as _A2ASkill
+from google.protobuf.json_format import MessageToDict as _proto_to_dict
 
 
 @dataclass
@@ -52,6 +57,23 @@ def build_agent_card(agent, *, name: str = "mini-coding-agent",
     )
 
 
+def _card_to_a2a_dict(card: A2AAgentCard) -> dict:
+    """Serialise *card* using official ``a2a.types.AgentCard`` protobuf types."""
+    a2a_card = _A2ACard(
+        name=card.name,
+        description=card.description,
+        version=card.version,
+    )
+    for skill in card.skills:
+        a2a_skill = _A2ASkill(
+            id=skill.get("name", ""),
+            name=skill.get("name", ""),
+            description=skill.get("description", ""),
+        )
+        a2a_card.skills.append(a2a_skill)
+    return _proto_to_dict(a2a_card, preserving_proto_field_name=True)
+
+
 # Type alias for a "task handler": given the message string, return the result string.
 TaskHandler = Callable[[str], str]
 
@@ -62,7 +84,7 @@ def make_a2a_app(card: A2AAgentCard, handler: TaskHandler) -> type:
     Returned as a class so callers can plug it into any HTTPServer they
     want (tests typically wrap it in :class:`ThreadingHTTPServer`).
     """
-    card_dict = asdict(card)
+    card_dict = _card_to_a2a_dict(card)
 
     class _Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A003 - silencing

@@ -14,6 +14,11 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.0.0"]
 yaml = ["pyyaml>=6.0"]
+protocols = [
+    "mcp>=1.27.1",
+    "a2a-sdk>=1.0.3",
+    "acp-sdk>=1.0.3",
+]
 
 [project.scripts]
 codelet = "codelet.cli:main"
