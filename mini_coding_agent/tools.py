@@ -180,6 +180,29 @@ class ToolRegistry:
             ),
             "run": self.tool_decompose,
         }
+        # Progressive-disclosure skills: only enabled when skills were
+        # discovered at agent-construction time. Provides a way to load a
+        # skill body on demand without paying its token cost upfront.
+        if getattr(agent, "skills", None):
+            tools["load_skill"] = {
+                "schema": {"name": "str"},
+                "risky": False,
+                "description": (
+                    "Load the body of a discovered skill (see <skills> in prompt). "
+                    "Returns the full SKILL.md body plus its asset manifest."
+                ),
+                "run": self.tool_load_skill,
+            }
+        if "write" in allowed:
+            tools["remember_fact"] = {
+                "schema": {"fact": "str"},
+                "risky": False,
+                "description": (
+                    "Append a one-line fact to .mini-coding-agent/repo-memory.md "
+                    "so future sessions inherit it."
+                ),
+                "run": self.tool_remember_fact,
+            }
         return tools
 
     # ---- read tools -----------------------------------------------------
@@ -551,6 +574,32 @@ class ToolRegistry:
         bullet_lines = "\n".join(f"  {idx + 1}. {step}" for idx, step in enumerate(steps))
         return f"plan recorded for goal: {goal}\n{bullet_lines}"
 
+    def tool_load_skill(self, args):
+        """Return a discovered skill's body (progressive disclosure)."""
+        from .skills import load_skill_body
+        agent = self.agent
+        name = str(args.get("name", "")).strip()
+        if not name:
+            raise ValueError("name must not be empty")
+        return load_skill_body(getattr(agent, "skills", []) or [], name)
+
+    def tool_remember_fact(self, args):
+        """Append a one-line fact to the workspace repo-memory file."""
+        agent = self.agent
+        fact = str(args.get("fact", "")).strip()
+        if not fact:
+            raise ValueError("fact must not be empty")
+        # Sanitise to a single line so the file remains a flat bullet list.
+        flat = " ".join(fact.splitlines())[:500]
+        target_dir = Path(agent.workspace.repo_root) / ".mini-coding-agent"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        memory_path = target_dir / "repo-memory.md"
+        existing = memory_path.read_text(encoding="utf-8") if memory_path.is_file() else ""
+        if not existing.endswith("\n") and existing:
+            existing += "\n"
+        memory_path.write_text(existing + f"- {flat}\n", encoding="utf-8")
+        return f"remembered: {flat}"
+
 
 def tool_argument_validators(agent, name, args):
     """Validate `args` for the named tool. Raises ValueError on bad input."""
@@ -661,6 +710,16 @@ def tool_argument_validators(agent, name, args):
             tasks = [line.strip() for line in tasks.splitlines() if line.strip()]
         if not isinstance(tasks, list) or not tasks:
             raise ValueError("tasks must be a non-empty list of strings")
+        return
+
+    if name == "load_skill":
+        if not str(args.get("name", "")).strip():
+            raise ValueError("name must not be empty")
+        return
+
+    if name == "remember_fact":
+        if not str(args.get("fact", "")).strip():
+            raise ValueError("fact must not be empty")
         return
 
     if name == "run_python":

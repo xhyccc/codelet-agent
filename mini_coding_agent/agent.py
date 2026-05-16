@@ -96,6 +96,12 @@ class MiniAgent:
 
         # Build the per-agent tool registry and stable prompt prefix.
         self.registry = ToolRegistry(self)
+        # Progressive-disclosure skills: discover SKILL.md files BEFORE
+        # tool registration so the registry can conditionally enable
+        # ``load_skill``.
+        from . import skills as skills_module
+        self.skills = skills_module.discover_skills(self.workspace.repo_root)
+        self._subdir_memory_loaded = set()
         self.tools = self.registry.build()
 
         # Pull project rules text from workspace files declared in config.
@@ -123,6 +129,12 @@ class MiniAgent:
                 project_rules_text = (project_rules_text + "\n\n" + extra).strip()
         else:
             self.memory_files = []
+        # Append the skill manifest (names + descriptions only). The bodies
+        # remain on disk until ``load_skill`` is called.
+        if self.skills:
+            manifest = skills_module.render_skill_manifest(self.skills)
+            if manifest:
+                project_rules_text = (project_rules_text + "\n\n" + manifest).strip()
         self.prefix = build_prefix(
             self.config.get("prompts", {}),
             self.tools,
@@ -372,10 +384,54 @@ class MiniAgent:
             return f"error: repeated identical tool call for {name}; choose a different tool or return a final answer"
         if tool["risky"] and not self.approve(name, args):
             return f"error: approval denied for {name}"
+        # Walk-down lazy memory loading: when a tool touches a subdirectory
+        # that carries its own AGENT.md / CLAUDE.md / AGENTS.md, surface its
+        # first ~800 chars into the working memory notes once.
+        self._maybe_load_subdir_memory(args)
         try:
             return clip(tool["run"](args))
         except Exception as exc:
             return f"error: tool {name} failed: {exc}"
+
+    def _maybe_load_subdir_memory(self, args):
+        """Pull in the nearest subdir-level AGENT.md (lazy, idempotent)."""
+        if not isinstance(args, dict):
+            return
+        candidates = []
+        for key in ("path", "src", "dst"):
+            raw = args.get(key)
+            if isinstance(raw, str) and raw:
+                candidates.append(raw)
+        seen = self._subdir_memory_loaded
+        notes = self.session["memory"].setdefault("notes", [])
+        repo_root = Path(self.workspace.repo_root).resolve()
+        for raw in candidates:
+            try:
+                resolved = self.path(raw)
+            except Exception:
+                continue
+            anchor = resolved if resolved.is_dir() else resolved.parent
+            # Walk from the anchor up to (but not including) repo root.
+            cur = anchor
+            while cur != repo_root and repo_root in cur.parents:
+                for fname in ("AGENT.md", "AGENTS.md", "CLAUDE.md"):
+                    candidate = cur / fname
+                    if not candidate.is_file():
+                        continue
+                    key = str(candidate)
+                    if key in seen:
+                        break
+                    seen.add(key)
+                    try:
+                        body = candidate.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        break
+                    snippet = body.strip().splitlines()[0] if body.strip() else ""
+                    rel = candidate.relative_to(repo_root)
+                    self.remember(notes, f"loaded subdir memory {rel}: {snippet[:200]}",
+                                  self.config.get("harness", {}).get("notes_limit", 16))
+                    break
+                cur = cur.parent
 
     def repeated_tool_call(self, name, args):
         tool_events = [item for item in self.session["history"] if item["role"] == "tool"]
