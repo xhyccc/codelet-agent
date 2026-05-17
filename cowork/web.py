@@ -846,11 +846,6 @@ class CoworkApp:
         )
 
         self.mem = MemoryStore(dim=64)
-        self.mem.add("Quarterly sales were up 12% YoY.", item_id="d1")
-        self.mem.add("New product launch scheduled for Q3.", item_id="d2")
-        self.mem.add("Hiring freeze lifted in engineering.", item_id="d3")
-        self.mem.add("Customer satisfaction improved 8 points.", item_id="d4")
-        self.mem.add("Budget approved for cloud infrastructure upgrade.", item_id="d5")
 
         self.registry = ConnectorRegistry()
         for c in [
