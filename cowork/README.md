@@ -3,11 +3,41 @@
 Enterprise-grade multi-agent collaborative office layer built on top of **codelet-agent**.  
 All modules are **stdlib-only** (Python 3.10+) — no new external dependencies.
 
+---
+
+## Quickstart — launching the full system
+
+```bash
+# 1. Install (editable)
+pip install -e .
+
+# 2. Start the web UI (opens browser automatically)
+python -m cowork serve
+
+# 3. Optional flags
+python -m cowork serve --port 9000          # custom port
+python -m cowork serve --host 0.0.0.0       # listen on all interfaces
+python -m cowork serve --no-browser         # skip auto-open
+
+# 4. CLI smoke-test (no browser needed)
+python -m cowork demo                       # prints JSON summary of all subsystems
+python -m cowork demo --workers 4 --tasks 8 --json
 ```
-python -m cowork demo          # CLI smoke-test (prints JSON summary)
-python -m cowork serve         # Launch web dashboard at http://127.0.0.1:8765
-python -m cowork serve --port 9000 --no-browser
-```
+
+The server starts at **http://127.0.0.1:8765** by default and serves a
+dark-theme 7-tab single-page application — no build step, no npm, no external JS.
+
+### Tab overview
+
+| Tab | What it does |
+|-----|-------------|
+| **Chat** | Conversational interface backed by the in-process codelet engine |
+| **Tasks** | OODA orchestration dashboard — generate plans, run swarms, monitor kanban status |
+| **Artifacts** | Versioned artifact store with sandboxed preview + rollback slider |
+| **Connectors** | OAuth-style connector marketplace with health indicators and scope badges |
+| **Projects** | Multiplayer project hubs — visibility controls, member roles, chat snapshots |
+| **Admin** | SSO / SAML config, RBAC capability matrix, SCIM group sync, telemetry, CSV export |
+| **Guardrails** | Payload sensitivity warnings, diff-review approval gates |
 
 ---
 
@@ -15,26 +45,31 @@ python -m cowork serve --port 9000 --no-browser
 
 ```
 cowork/
-├── models.py          F1  dataclass domain model (Tenant, User, Workspace, Session, …)
-├── store.py           F1  SQLite multi-tenant store (WAL, FK-ON, RLS helpers)
-├── events.py          F2  in-process pub/sub event bus + channel helpers
-├── engine.py          F3  codelet subprocess bridge (sync + streaming)
-├── parser.py          F3  <tool> / <final> stream parser matching codelet wire format
-├── collab.py          F4  LWW-CRDT primitives + advisory file-lock manager
-├── artifacts.py       F5  artifact stream parser + HTML/SVG sanitizer + persistence
-├── orchestrator.py    F6  hierarchical / sequential-DAG / swarm orchestrators
-├── memory.py          F7  BM25 + hashed-TF hybrid retrieval memory store
-├── security.py        F8  RBAC policy matrix + audit helper
-├── office/            F9  pluggable office connectors + registry
-│   ├── registry.py        ConnectorRegistry (register / invoke / as_tool_list)
-│   ├── microsoft_graph.py MicrosoftGraphConnector — email, calendar, files, Teams
-│   ├── zoom.py            ZoomConnector — OAuth token cache + create_meeting
-│   ├── wecom.py           WeComConnector — send_message + signature verification
-│   ├── libreoffice.py     LibreOfficeConnector — headless document conversion
-│   └── docling.py         DoclingConnector — document ingestion seam
-├── cli.py             F10 `demo` + `serve` subcommands
-├── web.py             F11 stdlib HTTP server + single-page dashboard
-└── tests/                 128 tests, 1 skipped (LibreOffice binary)
+├── models.py           F1  dataclass domain model (Tenant, User, Workspace, Session, …)
+├── store.py            F1  SQLite multi-tenant store (WAL, FK-ON, RLS helpers)
+├── events.py           F2  in-process pub/sub event bus + channel helpers
+├── engine.py           F3  codelet subprocess bridge (sync + streaming)
+├── parser.py           F3  <tool> / <final> stream parser matching codelet wire format
+├── collab.py           F4  LWW-CRDT primitives + advisory file-lock manager
+├── artifacts.py        F5  artifact stream parser + HTML/SVG sanitizer + persistence
+├── orchestrator.py     F6  hierarchical / sequential-DAG / swarm orchestrators
+├── memory.py           F7  BM25 + hashed-TF hybrid retrieval memory store
+├── security.py         F8  RBAC policy matrix + audit helper
+├── office/             F9  pluggable office connectors + registry
+│   ├── registry.py         ConnectorRegistry (register / invoke / as_tool_list)
+│   ├── microsoft_graph.py  MicrosoftGraphConnector — email, calendar, files, Teams
+│   ├── zoom.py             ZoomConnector — OAuth token cache + create_meeting
+│   ├── wecom.py            WeComConnector — send_message + signature verification
+│   ├── libreoffice.py      LibreOfficeConnector — headless document conversion
+│   └── docling.py          DoclingConnector — document ingestion seam
+├── cli.py              F10 `demo` + `serve` subcommands
+├── web.py              F11 stdlib HTTP server + 7-tab enterprise SPA (P1–P7)
+├── artifacts_store.py  F12 versioned artifact store (SQLite, rollback)
+├── scheduler.py        F13 natural-language → cron scheduler + TaskScheduler
+├── projects.py         F14 multiplayer project store (visibility, members, snapshots)
+├── admin.py            F15 SSO / RBAC / SCIM / telemetry / CSV export
+├── guardrails.py       F16 payload warnings + diff-review approval engine
+└── tests/                  216 tests (all pass with LibreOffice installed)
 ```
 
 ---
@@ -300,52 +335,195 @@ cowork demo
 
 ---
 
-### F11 — Web dashboard (`web.py`)
+### F11 — Web dashboard (`web.py`) — enterprise 7-tab SPA (P1–P7)
 
-```
+```bash
 python -m cowork serve [--host 127.0.0.1] [--port 8765] [--no-browser]
 ```
 
-Stdlib-only HTTP server (`http.server`) serving a single-page dark-theme dashboard.
+Stdlib-only HTTP server (`http.server`) serving a dark-theme single-page application.
+No npm, no build step — the entire UI is embedded in `web.py` as a raw string.
 
-**REST API:**
+**REST API — full reference:**
 
-| Method | Path                  | Description                                      |
-|--------|-----------------------|--------------------------------------------------|
-| GET    | `/`                   | HTML dashboard shell                             |
-| GET    | `/api/status`         | Tenant / workspace / kanban / audit count        |
-| GET    | `/api/connectors`     | Registered connector names                       |
-| GET    | `/api/audit`          | Recent audit log entries (last 50)               |
-| POST   | `/api/memory/search`  | `{"query": "…", "k": 5}` → ranked hits          |
-| POST   | `/api/tasks/run`      | `{"tasks": 4, "workers": 2}` → kanban stats      |
+| Method   | Path                                        | Description                                             |
+|----------|---------------------------------------------|---------------------------------------------------------|
+| `GET`    | `/`                                         | HTML SPA shell (7-tab dashboard)                        |
+| `GET`    | `/api/status`                               | Tenant / workspace / kanban / scheduler / audit count   |
+| `GET`    | `/api/connectors`                           | Registered connector names                              |
+| `GET`    | `/api/connectors/details`                   | Connector health + OAuth scopes                         |
+| `GET`    | `/api/audit`                                | Recent audit log entries (last 50)                      |
+| `GET`    | `/api/scheduler`                            | List all scheduled tasks                                |
+| `GET`    | `/api/artifacts`                            | List all artifacts                                      |
+| `GET`    | `/api/artifacts/{id}`                       | Get artifact by ID                                      |
+| `GET`    | `/api/artifacts/{id}/versions`              | List all versions of an artifact                        |
+| `GET`    | `/api/artifacts/{id}/versions/{v}`          | Get a specific artifact version (rollback)              |
+| `GET`    | `/api/projects`                             | List all projects                                       |
+| `GET`    | `/api/projects/{id}/snapshots`              | List chat snapshots for a project                       |
+| `GET`    | `/api/admin/sso`                            | Current SSO / SAML config                               |
+| `GET`    | `/api/admin/roles`                          | All RBAC roles + capability matrix                      |
+| `GET`    | `/api/admin/groups`                         | SCIM-synced groups                                      |
+| `GET`    | `/api/admin/telemetry`                      | Telemetry event log                                     |
+| `GET`    | `/api/admin/audit/export?days=180`          | Download audit log as CSV                               |
+| `GET`    | `/api/guardrails/warnings`                  | Active payload sensitivity warnings                     |
+| `GET`    | `/api/guardrails/diffs`                     | Pending diff-review requests                            |
+| `POST`   | `/api/chat`                                 | `{"message": "…"}` → chat response                     |
+| `POST`   | `/api/memory/search`                        | `{"query": "…", "k": 5}` → ranked hits                 |
+| `POST`   | `/api/tasks/run`                            | `{"tasks": 4, "workers": 2}` → kanban stats             |
+| `POST`   | `/api/tasks/plan`                           | `{"prompt": "…"}` → OODA plan checklist                 |
+| `POST`   | `/api/scheduler`                            | `{"name", "prompt", "cron_nl"}` → create scheduled task |
+| `POST`   | `/api/artifacts`                            | `{"title", "kind", "body"}` → create artifact + v1      |
+| `POST`   | `/api/projects`                             | `{"name", "visibility"}` → create project               |
+| `POST`   | `/api/projects/{id}/members`               | `{"user_id", "role"}` → add member                      |
+| `POST`   | `/api/projects/{id}/snapshots`             | `{"title", "content"}` → create chat snapshot           |
+| `POST`   | `/api/admin/sso`                            | Save SSO config                                         |
+| `POST`   | `/api/admin/roles`                          | Upsert RBAC role                                        |
+| `POST`   | `/api/admin/groups`                         | Sync SCIM group                                         |
+| `POST`   | `/api/guardrails/check`                     | Check payload sensitivity                               |
+| `POST`   | `/api/guardrails/diffs/{id}/resolve`        | Approve / reject a diff review                          |
+| `PATCH`  | `/api/scheduler/{id}`                       | Toggle scheduled task enabled/disabled                  |
+| `PATCH`  | `/api/projects/{id}`                        | Update project visibility or instructions               |
+| `DELETE` | `/api/scheduler/{id}`                       | Remove a scheduled task                                 |
+| `DELETE` | `/api/snapshots/{id}`                       | Revoke / unshare a chat snapshot                        |
+| `DELETE` | `/api/guardrails/warnings/{id}`             | Dismiss a payload warning                               |
 
-Dashboard panels: overview cards · kanban · run-tasks form ·
-office connectors · memory search · audit log (auto-refreshes every 10 s).
+Auto-refreshes status + scheduler every 10 s.
+
+---
+
+### F12 — Versioned artifact store (`artifacts_store.py`)
+
+SQLite-backed store that saves every iteration of a generated artifact and supports
+instant rollback via the version slider in the Artifacts tab.
+
+```python
+from cowork.artifacts_store import ArtifactVersionStore, ArtifactVersion
+
+store = ArtifactVersionStore(":memory:")
+av = ArtifactVersion(artifact_id="art_1", version=1, body="<h1>v1</h1>", attrs={"kind": "html"})
+store.save(av)
+latest = store.get_latest("art_1")
+v1     = store.get_version("art_1", 1)
+all_v  = store.list_versions("art_1")
+```
+
+---
+
+### F13 — Natural-language scheduler (`scheduler.py`)
+
+Converts plain-English recurrence descriptions to cron expressions and manages an
+in-memory task schedule displayed in the Tasks tab.
+
+```python
+from cowork.scheduler import nl_to_cron, TaskScheduler, ScheduledTask
+
+print(nl_to_cron("every day at 9am"))   # "0 9 * * *"
+print(nl_to_cron("every monday"))        # "0 9 * * 1"
+
+sched = TaskScheduler()
+task  = ScheduledTask(id="t1", name="Daily report", prompt="summarise today", cron="0 9 * * *")
+sched.add(task)
+sched.toggle("t1")    # enable / disable
+sched.mark_run("t1")  # record last-run timestamp
+```
+
+---
+
+### F14 — Multiplayer project store (`projects.py`)
+
+Persistent project workspaces with visibility controls, member roles, and shareable
+chat snapshots — backing the Projects tab.
+
+```python
+from cowork.projects import ProjectStore, Project, VISIBILITY_ORG, ROLE_EDITOR
+
+ps = ProjectStore(":memory:")
+proj = ps.create(Project(name="Q3 Analysis", visibility=VISIBILITY_ORG))
+ps.add_member(proj.id, "usr_alice", ROLE_EDITOR)
+snap = ps.create_snapshot(proj.id, title="Initial findings", content="…")
+ps.revoke_snapshot(snap.id)
+```
+
+Visibility constants: `VISIBILITY_PRIVATE`, `VISIBILITY_INVITED`, `VISIBILITY_ORG`.  
+Role constants: `ROLE_VIEWER`, `ROLE_EDITOR`.
+
+---
+
+### F15 — Admin governance (`admin.py`)
+
+SSO / SAML config, RBAC capability matrix, SCIM group sync, telemetry event log, and
+CSV audit export — all surfaced in the Admin tab.
+
+```python
+from cowork.admin import AdminStore, SSOConfig, RBACRole, ALL_CAPABILITIES
+
+adm = AdminStore(":memory:")
+adm.save_sso(SSOConfig(provider="okta", metadata_url="https://…", require_sso=True))
+adm.upsert_role(RBACRole(name="analyst", capabilities=["read", "export"]))
+adm.sync_group({"name": "data-team", "members": ["alice", "bob"]})
+
+csv_bytes = adm.export_audit_csv(days=90)
+```
+
+Built-in roles: `admin`, `editor`, `viewer`, `auditor`.  
+All 11 capability constants are in `ALL_CAPABILITIES`.
+
+---
+
+### F16 — Guardrails (`guardrails.py`)
+
+Payload sensitivity assessment, warning dismissal, and diff-review approval gates —
+surfaced in the Guardrails tab.
+
+```python
+from cowork.guardrails import GuardrailEngine
+
+ge = GuardrailEngine()
+
+# Check before ingesting a file
+warning = ge.check_payload(
+    resource_path="/data/contracts/acme.pdf",
+    size_bytes=12_000_000,
+    workspace_visibility="org",
+    content_sample="CONFIDENTIAL — Master Service Agreement …",
+)
+if warning:
+    ge.dismiss_warning(warning.id)          # user acknowledged
+
+# Request a diff review before applying a patch
+review = ge.request_diff_review("patch-xyz", "- old line\n+ new line")
+ge.resolve_diff(review.id, approved=True, feedback="LGTM")
+```
+
+`GuardrailEngine.MAX_INGEST_BYTES = 52_428_800` (50 MB hard limit).
 
 ---
 
 ## Running tests
 
 ```bash
-# Full cowork suite
+# Full cowork suite (LibreOffice must be installed for 216/216)
 PYTHONPATH=. python -m pytest cowork/tests/ -q
-# 128 passed, 1 skipped (LibreOffice binary not installed)
-```
+# 216 passed  ← with LibreOffice installed (brew install --cask libreoffice)
+# 215 passed, 1 skipped  ← without LibreOffice
 
-Individual suites:
-
-```bash
-PYTHONPATH=. python -m pytest cowork/tests/test_store.py       # F1
-PYTHONPATH=. python -m pytest cowork/tests/test_events.py      # F2
-PYTHONPATH=. python -m pytest cowork/tests/test_engine.py      # F3
-PYTHONPATH=. python -m pytest cowork/tests/test_collab.py      # F4
-PYTHONPATH=. python -m pytest cowork/tests/test_artifacts.py   # F5
-PYTHONPATH=. python -m pytest cowork/tests/test_orchestrator.py # F6
-PYTHONPATH=. python -m pytest cowork/tests/test_memory.py      # F7
-PYTHONPATH=. python -m pytest cowork/tests/test_security.py    # F8
-PYTHONPATH=. python -m pytest cowork/tests/test_office.py      # F9
-PYTHONPATH=. python -m pytest cowork/tests/test_cli.py         # F10
-PYTHONPATH=. python -m pytest cowork/tests/test_web.py         # F11
+# Individual suites
+PYTHONPATH=. python -m pytest cowork/tests/test_store.py            # F1
+PYTHONPATH=. python -m pytest cowork/tests/test_events.py           # F2
+PYTHONPATH=. python -m pytest cowork/tests/test_engine.py           # F3
+PYTHONPATH=. python -m pytest cowork/tests/test_collab.py           # F4
+PYTHONPATH=. python -m pytest cowork/tests/test_artifacts.py        # F5
+PYTHONPATH=. python -m pytest cowork/tests/test_orchestrator.py     # F6
+PYTHONPATH=. python -m pytest cowork/tests/test_memory.py           # F7
+PYTHONPATH=. python -m pytest cowork/tests/test_security.py         # F8
+PYTHONPATH=. python -m pytest cowork/tests/test_office.py           # F9  (1 real LibreOffice test)
+PYTHONPATH=. python -m pytest cowork/tests/test_cli.py              # F10
+PYTHONPATH=. python -m pytest cowork/tests/test_web.py              # F11
+PYTHONPATH=. python -m pytest cowork/tests/test_artifacts_store.py  # F12
+PYTHONPATH=. python -m pytest cowork/tests/test_scheduler.py        # F13
+PYTHONPATH=. python -m pytest cowork/tests/test_projects.py         # F14
+PYTHONPATH=. python -m pytest cowork/tests/test_admin.py            # F15
+PYTHONPATH=. python -m pytest cowork/tests/test_guardrails.py       # F16
 ```
 
 ---
@@ -365,3 +543,4 @@ PYTHONPATH=. python -m pytest cowork/tests/test_web.py         # F11
 | `d89aa7e` | F9  office connectors (MS Graph, Zoom, WeCom, LibreOffice, Docling) + registry |
 | `5a25e2b` | F10 demo CLI (`python -m cowork demo`) |
 | `fbc7ca3` | F11 web UI (`python -m cowork serve`) |
+| `d812ffb` | F12–F16 + P1–P7 enterprise UI: versioned artifacts · scheduler · projects · admin · guardrails · 7-tab SPA |
