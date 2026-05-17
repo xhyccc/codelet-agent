@@ -486,6 +486,46 @@ const App = {
 
   /* ── Chat ── */
   loadChat(){this.renderMsgs()},
+  _splitToolTrailing(toolName, raw){
+    // Separate the tool's own output from any trailing LLM text that was
+    // printed immediately after the tool result (no explicit delimiter).
+    // Returns {toolContent, trailing}.
+    const SHELL=['run_shell','run_python'];
+    const LIST=['list_files','glob'];
+    if(SHELL.includes(toolName)){
+      // Format: "exit_code: N\nstdout:\n<out>\nstderr:\n<err or (empty)>"
+      // LLM text is appended right after the last (empty) or stderr content.
+      const seIdx=raw.lastIndexOf('\nstderr:\n');
+      if(seIdx!==-1){
+        const after=raw.slice(seIdx+'\nstderr:\n'.length);
+        if(after.startsWith('(empty)')){
+          return{toolContent:raw.slice(0,seIdx+'\nstderr:\n'.length)+'(empty)',trailing:after.slice('(empty)'.length).trim()};
+        }
+        // non-empty stderr: look for blank line as separator
+        const nl2=after.indexOf('\n\n');
+        if(nl2!==-1) return{toolContent:raw.slice(0,seIdx+'\nstderr:\n'.length)+after.slice(0,nl2),trailing:after.slice(nl2).trim()};
+      }
+    } else if(LIST.includes(toolName)){
+      // Lines prefixed [D]/[F] are tool output; anything after is LLM text.
+      const lines=raw.split('\n');
+      let last=-1;
+      lines.forEach((l,i)=>{if(/^\[(?:D|F)\] /.test(l)||l==='(empty)'||l==='(no matches)')last=i;});
+      if(last!==-1&&last<lines.length-1){
+        const trailing=lines.slice(last+1).join('\n').trim();
+        if(trailing) return{toolContent:lines.slice(0,last+1).join('\n'),trailing};
+      }
+    } else if(toolName==='read_file'||toolName==='search'){
+      // read_file: "# path\n   N: line"; search: "path:N:text"
+      const lines=raw.split('\n');
+      let last=-1;
+      lines.forEach((l,i)=>{if(/^\s*\d+[: ]/.test(l)||l.startsWith('# ')||l==='(no matches)')last=i;});
+      if(last!==-1&&last<lines.length-1){
+        const trailing=lines.slice(last+1).join('\n').trim();
+        if(trailing) return{toolContent:lines.slice(0,last+1).join('\n'),trailing};
+      }
+    }
+    return{toolContent:raw,trailing:''};
+  },
   formatMsg(raw){
     const E=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const md=s=>E(s).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`([^`\n]+)`/g,'<code class="ic">$1</code>').replace(/\n/g,'<br>');
@@ -494,8 +534,13 @@ const App = {
     const steps=[];let finalText='';
     for(const p of parts){
       const m=p.match(/^\[([\w_]+) output\]([\s\S]*)/);
-      if(m){steps.push({tool:m[1],content:m[2].trim()})}
-      else{const t=p.trim();if(t)finalText+=(finalText?'\n':'')+t;}
+      if(m){
+        const{toolContent,trailing}=this._splitToolTrailing(m[1],m[2].trim());
+        steps.push({tool:m[1],content:toolContent});
+        if(trailing)finalText+=(finalText?'\n\n':'')+trailing;
+      } else {
+        const t=p.trim();if(t)finalText+=(finalText?'\n\n':'')+t;
+      }
     }
     let out='';
     if(steps.length){
@@ -503,11 +548,10 @@ const App = {
       steps.forEach((s,i)=>{
         const isErr=s.content.startsWith('error:');
         const icon=isErr?'&#9888;':'&#9881;';
-        // compute brief summary
         let brief='';
         if(!isErr){
-          if(s.tool==='run_shell'){
-            const ecM=s.content.match(/exit_code:\s*(\d+)/),stM=s.content.match(/stdout:\s*([\s\S]*?)(?=\s*stderr:|$)/);
+          if(s.tool==='run_shell'||s.tool==='run_python'){
+            const ecM=s.content.match(/exit_code:\s*(\d+)/),stM=s.content.match(/stdout:\n([\s\S]*?)(?:\nstderr:|$)/);
             const ec=ecM?ecM[1]:'?',sout=(stM?stM[1]:'').trim();
             const lines=sout&&sout!=='(empty)'?sout.split('\n').filter(l=>l).length:0;
             brief=`exit ${ec}${lines?' &middot; '+lines+' lines':''}`;
