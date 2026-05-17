@@ -1,0 +1,4 @@
+# Core runtime dependencies
+mcp>=1.27.1
+a2a-sdk>=1.0.3
+acp-sdk>=1.0.3
