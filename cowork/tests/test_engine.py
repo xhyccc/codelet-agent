@@ -96,7 +96,7 @@ def test_build_argv_minimal(tmp_path: Path):
     assert "--no-welcome" in argv
     assert "--approval" in argv
     assert argv[argv.index("--approval") + 1] == "auto"
-    assert "-p" in argv and argv[argv.index("-p") + 1] == "hi"
+    assert "-p" not in argv and argv[-1] == "hi"
 
 
 def test_build_argv_resume_and_config(tmp_path: Path):
