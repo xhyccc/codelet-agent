@@ -82,7 +82,7 @@ _UI_HTML = r"""<!doctype html>
 <style>
 :root{--bg:#0f1117;--s:#1a1d27;--c:#21242f;--b:#2d3142;--a:#5c7cfa;--ok:#40c057;--w:#fd7e14;--d:#f03e3e;--t:#e9ecef;--m:#868e96}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--t);display:flex;min-height:100vh}
+body{font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--t);display:flex;height:100vh;overflow:hidden}
 #sidebar{width:220px;min-height:100vh;background:var(--s);border-right:1px solid var(--b);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:10}
 .logo{padding:1.1rem 1rem;font-size:1.1rem;font-weight:800;letter-spacing:-.03em;color:var(--a);border-bottom:1px solid var(--b)}
 .nav-items{flex:1;padding:.4rem 0}
@@ -92,16 +92,18 @@ body{font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--t);disp
 .sessions-panel{padding:.65rem .9rem;border-top:1px solid var(--b);font-size:.7rem;color:var(--m)}
 .sessions-panel .sh{font-weight:600;color:var(--t);margin-bottom:.3rem}
 .sessions-panel .sv{font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:.15rem}
-#main{margin-left:220px;flex:1;display:flex;flex-direction:column;min-height:100vh}
+#main{margin-left:220px;flex:1;display:flex;flex-direction:column;overflow:hidden}
 #topbar{background:var(--s);border-bottom:1px solid var(--b);padding:.55rem 1.4rem;display:flex;align-items:center;gap:.55rem;position:sticky;top:0;z-index:5}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0}
 .dot.off{background:var(--d)}
 #status-label{font-size:.7rem;color:var(--m)}
 .spacer{flex:1}
 #tenant-label{font-size:.73rem;color:var(--m);font-family:monospace}
-#panels{flex:1;overflow:auto}
+#panels{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .panel{display:none;padding:1.4rem;max-width:1200px}
-.panel.active{display:block}
+.panel.active{display:block;flex:1;overflow-y:auto}
+#panel-chat.active{display:flex;flex-direction:column;flex:1;overflow:hidden;max-width:none}
+#panel-chat .section{flex:1;display:flex;flex-direction:column;overflow:hidden;margin-bottom:0}
 h2{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--m);margin-bottom:.85rem}
 h3{font-size:.86rem;font-weight:700;color:var(--t);margin-bottom:.65rem}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:.7rem;margin-bottom:1.2rem}
@@ -136,13 +138,22 @@ tr:hover td{background:#ffffff04}
 .badge-json{background:#2f2414;color:#ffa94d}
 .badge-md{background:#0f2820;color:#63e6be}
 .badge-svg{background:#2a1a2f;color:#e599f7}
-#chat-msgs{height:390px;overflow-y:auto;display:flex;flex-direction:column;gap:.55rem;padding:.4rem 0;margin-bottom:.65rem}
+#chat-msgs{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:.55rem;padding:.4rem 0}
 .msg{padding:.6rem .85rem;border-radius:8px;max-width:76%;font-size:.83rem;line-height:1.5}
 .msg-user{background:color-mix(in srgb,var(--a) 18%,transparent);border:1px solid color-mix(in srgb,var(--a) 28%,transparent);align-self:flex-end}
 .msg-bot{background:var(--c);border:1px solid var(--b);align-self:flex-start}
 .msg-meta{font-size:.63rem;color:var(--m);margin-bottom:.22rem}
-.chat-input-row{display:flex;gap:.45rem}
+.chat-input-row{display:flex;gap:.45rem;flex-shrink:0}
 .chat-input-row textarea{flex:1;height:46px;min-height:46px}
+.tb{border-radius:6px;margin:.3rem 0;overflow:hidden;border:1px solid var(--b)}
+.tb-err{background:#150808;border-color:#5c1a1a}
+.tb-ok{background:#090e14}
+.tbl{display:flex;align-items:center;padding:.28rem .65rem;font-size:.68rem;font-weight:600;color:var(--m)}
+details.tb-ok>summary.tbl{list-style:none;user-select:none;cursor:pointer}
+.tpre{background:#060810;padding:.45rem .7rem;font-family:'JetBrains Mono',monospace;font-size:.7rem;color:#a8b6c8;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto;line-height:1.5}
+.tpre-err{color:#ff8787}
+.msg-text{margin:.15rem 0}
+.ic{background:var(--s);border:1px solid var(--b);border-radius:3px;padding:.04rem .28rem;font-family:monospace;font-size:.82em}
 .kanban{display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem;margin-bottom:.9rem}
 .kb-col{background:var(--s);border:1px solid var(--b);border-radius:8px;padding:.65rem}
 .kb-col-h{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--m);margin-bottom:.5rem;display:flex;align-items:center;gap:.35rem}
@@ -239,9 +250,9 @@ input[type=checkbox]{accent-color:var(--a);width:13px;height:13px;cursor:default
     <!-- CHAT -->
     <div id="panel-chat" class="panel active">
       <h2>Chat</h2>
-      <div class="section" style="display:flex;flex-direction:column">
+      <div class="section">
         <div id="chat-msgs"></div>
-        <div class="chat-input-row">
+        <div class="chat-input-row" style="padding-top:.5rem">
           <textarea id="chat-q" placeholder="Message cowork&#8230;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();App.sendChat()}"></textarea>
           <button class="btn btn-primary" onclick="App.sendChat()">Send</button>
         </div>
@@ -463,13 +474,39 @@ const App = {
 
   /* ── Chat ── */
   loadChat(){this.renderMsgs()},
+  formatMsg(raw){
+    const E=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const md=s=>E(s).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`([^`\n]+)`/g,'<code class="ic">$1</code>').replace(/\n/g,'<br>');
+    const segs=raw.split(/(?=\[run_shell output\])/);
+    let out='';
+    for(const seg of segs){
+      if(!seg.startsWith('[run_shell output]')){
+        const t=seg.trim();if(t)out+=`<div class="msg-text">${md(t)}</div>`;
+        continue;
+      }
+      const body=seg.slice('[run_shell output]'.length).trim();
+      if(body.startsWith('error:')){
+        out+=`<div class="tb tb-err"><span class="tbl">&#9888; error</span><pre class="tpre">${E(body.replace(/^error:\s*/,''))}</pre></div>`;
+        continue;
+      }
+      const ecM=body.match(/exit_code:\s*(\d+)/),stdM=body.match(/stdout:\s*([\s\S]*?)(?=\s*stderr:|$)/),errM=body.match(/stderr:\s*([\s\S]*)$/);
+      const ec=ecM?ecM[1]:'?',stdout=(stdM?stdM[1]:'').trim(),stderr=(errM?errM[1]:'').trim();
+      const hasOut=stdout&&stdout!=='(empty)',hasErr=stderr&&stderr!=='(empty)';
+      const lines=hasOut?stdout.split('\n').length:0;
+      out+=`<details class="tb tb-ok"><summary class="tbl">&#128032; shell &mdash; exit ${ec}${lines?' &middot; '+lines+' lines':''}</summary>`;
+      if(hasOut)out+=`<pre class="tpre">${E(stdout)}</pre>`;
+      if(hasErr)out+=`<pre class="tpre tpre-err">${E(stderr)}</pre>`;
+      out+='</details>';
+    }
+    return out||E(raw);
+  },
   renderMsgs(){
     const el=document.getElementById('chat-msgs');
     if(!this.state.msgs.length){
       el.innerHTML='<div class="msg msg-bot"><div class="msg-meta">cowork</div>Hello! Ask me anything about the workspace.</div>';
       return;
     }
-    el.innerHTML=this.state.msgs.map(m=>`<div class="msg msg-${m.r}"><div class="msg-meta">${m.r==='user'?'You':'cowork'}</div>${this.esc(m.c)}</div>`).join('');
+    el.innerHTML=this.state.msgs.map(m=>`<div class="msg msg-${m.r}"><div class="msg-meta">${m.r==='user'?'You':'cowork'}</div>${m.r==='bot'?this.formatMsg(m.c):this.esc(m.c)}</div>`).join('');
     el.scrollTop=el.scrollHeight;
   },
   async sendChat(){
