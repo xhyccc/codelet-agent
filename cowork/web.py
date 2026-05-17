@@ -1096,7 +1096,7 @@ class CoworkApp:
             prompt=prompt,
             cwd=Path.cwd(),
             approval="auto",
-            timeout=60.0,
+            timeout=180.0,
         )
         result = self.engine.run(inv)
 
@@ -1104,14 +1104,27 @@ class CoworkApp:
             reply = result.final
             source = "agent"
         elif result.returncode == 0 and result.stdout.strip():
-            reply = result.stdout.strip()[:4000]
+            reply = result.stdout.strip()[:8000]
             source = "agent"
-        else:
-            # Agent unavailable (not configured / no API key) — surface memory context
-            if ctx_lines:
-                reply = "[agent unavailable] Workspace context: " + " | ".join(ctx_lines[:2])
+        elif result.returncode == -1:
+            # Subprocess timed out — return whatever partial output we have
+            partial = (result.stdout or "").strip()
+            if partial:
+                reply = partial[:8000]
+                source = "agent"
             else:
-                reply = "Agent unavailable. Check your codelet configuration (API key / model)."
+                reply = "[timeout] The agent did not respond within 180 s. Try a shorter or simpler request."
+                source = "fallback"
+        else:
+            # Non-zero exit — include stderr so the user can diagnose
+            err = (result.stderr or "").strip()[:800]
+            if err:
+                reply = f"[exit {result.returncode}] {err}"
+            else:
+                reply = (
+                    f"[exit {result.returncode}] Agent process exited unexpectedly. "
+                    "Check that `python -m codelet` works from the same directory."
+                )
             source = "fallback"
 
         audit(self.store, self.actor, "chat.message",
