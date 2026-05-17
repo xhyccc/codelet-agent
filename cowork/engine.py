@@ -88,9 +88,9 @@ class CodeletEngine:
             argv.extend(["--backend", inv.backend])
         if inv.extra_args:
             argv.extend(list(inv.extra_args))
-        # Trailing prompt: codelet accepts positional prompt args.
+        # Trailing prompt: positional arg — must come LAST, no -p flag.
         if inv.prompt:
-            argv.extend(["-p", inv.prompt])
+            argv.append(inv.prompt)
         return argv
 
     # ---- run -----------------------------------------------------------
