@@ -31,7 +31,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["codelet*"]
+include = ["codelet*", "cowork*"]
 
 [tool.setuptools.package-data]
 codelet = ["config/*.yaml"]

@@ -103,6 +103,17 @@ def cmd_demo(argv: Optional[list[str]] = None) -> int:
     return 0
 
 
+def cmd_serve(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(prog="cowork serve")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--no-browser", action="store_true")
+    args = parser.parse_args(argv or [])
+    from .web import CoworkApp, serve  # local import to keep startup fast
+    serve(host=args.host, port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     if not argv:
@@ -110,8 +121,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     cmd, *rest = argv
     if cmd == "demo":
         return cmd_demo(rest)
+    if cmd == "serve":
+        return cmd_serve(rest)
     if cmd in ("-h", "--help", "help"):
-        sys.stdout.write("usage: python -m cowork demo [--workers N] [--tasks N] [--json]\n")
+        sys.stdout.write(
+            "usage: python -m cowork <command> [options]\n"
+            "commands:\n"
+            "  demo   [--workers N] [--tasks N] [--json]\n"
+            "  serve  [--host HOST] [--port PORT] [--no-browser]\n"
+        )
         return 0
     sys.stderr.write(f"unknown command: {cmd}\n")
     return 2
