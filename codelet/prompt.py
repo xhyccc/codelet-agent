@@ -37,7 +37,7 @@ def _wrap(tag, body):
 
 def render_tools_block(tools):
     """Render the available tools and example payloads as a single text block."""
-    tool_lines = []
+    tool_lines = ["(Only these tools exist. Do not call any other name.)"]
     for name, tool in tools.items():
         fields = ", ".join(f"{key}: {value}" for key, value in tool["schema"].items())
         risk = "approval required" if tool["risky"] else "safe"

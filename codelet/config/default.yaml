@@ -39,6 +39,8 @@ prompts:
     - 'For write_file and patch_file with multi-line text, prefer XML style: <tool name="write_file" path="file.py"><content>...</content></tool>'
     - 'Final answers must look like: <final>your answer</final>'
     - Never invent tool results.
+    - Only call tools that appear in the Tools list. Never guess or invent tool names.
+    - Do not invent or report skills, tools, or capabilities not listed in your context. If asked what skills you have, report only the entries in the <skills> section; if that section is absent or empty, say you have none.
     - Keep answers concise and concrete.
     - If the user asks you to create or update a specific file and the path is clear, use write_file or patch_file instead of repeatedly listing files.
     - Before writing tests for existing code, read the implementation first.
@@ -60,6 +62,7 @@ prompts:
     run_shell: '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>'
     run_python: '<tool>{"name":"run_python","args":{"code":"import sys; print(sys.version)","timeout":20}}</tool>'
     delegate: '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>'
+    load_skill: '<tool>{"name":"load_skill","args":{"name":"perplexity-search"}}</tool>'
 
   # Layer 3: project rules. The string here is appended *after* any rules
   # auto-discovered from AGENTS.md / .mini-coding-agent/rules.md in the workspace.
@@ -152,10 +155,20 @@ project_rules_files:
 # CLAUDE.md / AGENTS.md / .claude/rules/*.md / CLAUDE.local.md locations
 # and includes up to ``max_files`` of them in the <project-rules> layer,
 # selected by an LLM-friendly header-based scan (no vector embeddings).
+# global_roots and user_roots are intentionally left unset (empty by default);
+# set them explicitly here if you want to pull in system-wide or per-user
+# instruction files.
 memory_files:
   enabled: true
   max_files: 5
-
+  # Scope user-home lookup to CLAUDE.md only. The ~/.claude/ directory also
+  # contains AGENTS.md (Claude Code's skill registry) which must not be
+  # loaded here — it lists 200+ skills with Claude Code invocation syntax
+  # that is incompatible with codelet's load_skill() mechanism.
+  #user_roots:
+  #  - "~/.claude/CLAUDE.md"
+  #  - "~/.mini-coding-agent/CLAUDE.md"
+    
 # Sandbox policy. See codelet.sandbox for the field semantics.
 # Override these to relax or tighten what risky tools may do. Keys are
 # optional; omit a key to keep the built-in defaults.

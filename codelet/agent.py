@@ -387,6 +387,15 @@ class MiniAgent:
     def run_tool(self, name, args):
         tool = self.tools.get(name)
         if tool is None:
+            # Give a targeted redirect when the caller tried to invoke a skill
+            # name directly — a common LLM mistake with progressive-disclosure.
+            skill_names = [s.name for s in getattr(self, "skills", []) or []]
+            if name in skill_names:
+                return (
+                    f"error: '{name}' is a skill, not a callable tool. "
+                    f"Call load_skill(name=\"{name}\") first to retrieve its "
+                    f"instructions, then follow them."
+                )
             return f"error: unknown tool '{name}'"
         try:
             self.validate_tool(name, args)

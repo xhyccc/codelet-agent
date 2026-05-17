@@ -20,7 +20,9 @@ import json
 import threading
 import time
 import webbrowser
+import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 from pathlib import Path
 from typing import Optional
 
@@ -166,6 +168,8 @@ details.step-item>summary.step-hdr{list-style:none}
 .step-num{margin-left:auto;color:#2e3d52;font-size:.6rem;font-family:monospace;flex-shrink:0}
 .step-body{background:#060810;padding:.38rem .62rem;font-family:'JetBrains Mono',monospace;font-size:.67rem;color:#667a96;white-space:pre-wrap;word-break:break-all;max-height:180px;overflow-y:auto;line-height:1.45}
 .msg-reply{padding-top:.35rem;border-top:1px solid rgba(255,255,255,.055);margin-top:.1rem}
+@keyframes thdot{0%,80%,100%{transform:scale(.4);opacity:.25}40%{transform:scale(1);opacity:1}}.thinking-bubble{display:flex;align-items:center;gap:.28rem;padding:.3rem .45rem;min-height:1.4rem}.thinking-dot{width:6px;height:6px;border-radius:50%;background:var(--a);display:inline-block;animation:thdot 1.3s infinite ease-in-out}.thinking-dot:nth-child(2){animation-delay:.2s}.thinking-dot:nth-child(3){animation-delay:.4s}.chat-input-row.busy textarea,.chat-input-row.busy button{opacity:.45;pointer-events:none}
+@keyframes spin{to{transform:rotate(360deg)}}.step-spin{display:inline-block;animation:spin 1.6s linear infinite;transform-origin:center;line-height:1}.step-running{border-color:rgba(74,130,220,.25)!important;background:#090d18!important}.step-running .step-hdr{color:#4a6e99}.step-run-dots{display:inline-flex;gap:.12rem;align-items:center}.step-run-dots span{width:3px;height:3px;border-radius:50%;background:var(--a);display:inline-block;animation:thdot 1.1s infinite ease-in-out}.step-run-dots span:nth-child(2){animation-delay:.18s}.step-run-dots span:nth-child(3){animation-delay:.36s}
 .kanban{display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem;margin-bottom:.9rem}
 .kb-col{background:var(--s);border:1px solid var(--b);border-radius:8px;padding:.65rem}
 .kb-col-h{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--m);margin-bottom:.5rem;display:flex;align-items:center;gap:.35rem}
@@ -453,7 +457,7 @@ input[type=checkbox]{accent-color:var(--a);width:13px;height:13px;cursor:default
 
 <script>
 const App = {
-  state:{msgs:[],arts:[],selArt:null,selVer:null,vers:[],projs:[],selProj:null,scheds:[]},
+  state:{msgs:[],arts:[],selArt:null,selVer:null,vers:[],projs:[],selProj:null,scheds:[],thinking:false,streamSteps:[]},
 
   esc(s){const d=document.createElement('div');d.textContent=String(s??'');return d.innerHTML},
 
@@ -504,6 +508,16 @@ const App = {
         // non-empty stderr: look for blank line as separator
         const nl2=after.indexOf('\n\n');
         if(nl2!==-1) return{toolContent:raw.slice(0,seIdx+'\nstderr:\n'.length)+after.slice(0,nl2),trailing:after.slice(nl2).trim()};
+        // non-empty stderr with no blank line — treat entire stderr as tool output, no trailing
+        return{toolContent:raw,trailing:''};
+      }
+      // No stderr section found — tool output was truncated by clip().
+      // The truncation marker ends with "...[truncated N chars]"; LLM text
+      // follows it on the next line after the last such marker.
+      const truncM=raw.match(/\n\.\.\.\[truncated \d+ chars\](\n[\s\S]*)?$/);
+      if(truncM&&truncM[1]){
+        const after=truncM[1].replace(/^\n/,'');
+        if(after.trim()) return{toolContent:raw.slice(0,raw.length-truncM[1].length),trailing:after.trim()};
       }
     } else if(LIST.includes(toolName)){
       // Lines prefixed [D]/[F] are tool output; anything after is LLM text.
@@ -577,15 +591,73 @@ const App = {
       el.innerHTML='<div class="msg msg-bot"><div class="msg-meta">cowork</div>Hello! Ask me anything about the workspace.</div>';
       return;
     }
-    el.innerHTML=this.state.msgs.map(m=>`<div class="msg msg-${m.r}"><div class="msg-meta">${m.r==='user'?'You':'cowork'}</div>${m.r==='bot'?this.formatMsg(m.c):this.esc(m.c)}</div>`).join('');
+    let html=this.state.msgs.map(m=>`<div class="msg msg-${m.r}"><div class="msg-meta">${m.r==='user'?'You':'cowork'}</div>${m.r==='bot'?this.formatMsg(m.c):this.esc(m.c)}</div>`).join('');
+    if(this.state.thinking){
+      let bb='<div class="msg msg-bot"><div class="msg-meta">cowork</div>';
+      if(this.state.streamSteps.length){
+        bb+='<div class="step-list">';
+        this.state.streamSteps.forEach(s=>{
+          const run=s.state==='running';
+          let brief='';
+          if(run){brief='<span class="step-run-dots"><span></span><span></span><span></span></span>';}
+          else if(s.content){const ecM=s.content.match(/exit_code:\s*(\d+)/),stM=s.content.match(/stdout:\n([\s\S]*?)(?:\nstderr:|$)/);const ec=ecM?ecM[1]:'?',lines=(stM&&stM[1]&&stM[1].trim()&&stM[1].trim()!=='(empty)')?stM[1].trim().split('\n').filter(l=>l).length:0;brief='exit '+ec+(lines?' &middot; '+lines+' lines':'');}
+          const icon=run?'<span class="step-spin">&#9881;</span>':'&#9881;';
+          bb+='<details class="step-item'+(run?' step-running':'')+'"'+(run?' open':'')+'>';
+          bb+='<summary class="step-hdr"><span class="step-icon">'+icon+'</span><span class="step-tool">'+this.esc(s.tool)+'</span>'+(brief?'<span class="step-brief">'+brief+'</span>':'')+'<span class="step-num">#'+s.n+'</span></summary>';
+          if(s.content)bb+='<pre class="step-body">'+this.esc(s.content)+'</pre>';
+          bb+='</details>';
+        });
+        bb+='</div>';
+      }
+      bb+='<div class="thinking-bubble"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></div></div>';
+      html+=bb;
+    }
+    el.innerHTML=html;
     el.scrollTop=el.scrollHeight;
   },
   async sendChat(){
     const q=document.getElementById('chat-q').value.trim();if(!q)return;
     document.getElementById('chat-q').value='';
-    this.state.msgs.push({r:'user',c:q});this.renderMsgs();
-    const r=await this.post('/api/chat',{message:q});
-    this.state.msgs.push({r:'bot',c:r.reply||'&#8230;'});this.renderMsgs();
+    const row=document.querySelector('.chat-input-row');
+    row.classList.add('busy');
+    this.state.msgs.push({r:'user',c:q});
+    this.state.thinking=true;this.state.streamSteps=[];
+    this.renderMsgs();
+    try{
+      const resp=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:q})});
+      if(!resp.ok)throw new Error('HTTP '+resp.status);
+      const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
+      while(true){
+        const{done,value}=await reader.read();
+        if(done)break;
+        buf+=dec.decode(value,{stream:true});
+        let idx;
+        while((idx=buf.indexOf('\n\n'))!==-1){
+          const chunk=buf.slice(0,idx);buf=buf.slice(idx+2);
+          if(chunk.startsWith('data: ')){try{this._handleStreamEvent(JSON.parse(chunk.slice(6)));}catch{}}
+        }
+      }
+    }catch(e){
+      this.state.thinking=false;this.state.streamSteps=[];
+      this.state.msgs.push({r:'bot',c:'[error] '+e.message});
+      this.renderMsgs();
+    }finally{
+      row.classList.remove('busy');
+    }
+  },
+  _handleStreamEvent(ev){
+    if(ev.type==='tool_start'){
+      this.state.streamSteps.push({tool:ev.tool,n:ev.n,state:'running',content:null});
+      this.renderMsgs();
+    }else if(ev.type==='tool_done'){
+      const s=this.state.streamSteps.find(x=>x.n===ev.n);
+      if(s){s.state='done';s.content=ev.content??'';}
+      this.renderMsgs();
+    }else if(ev.type==='done'){
+      this.state.thinking=false;this.state.streamSteps=[];
+      this.state.msgs.push({r:'bot',c:ev.reply!=null?ev.reply:'(no response)'});
+      this.renderMsgs();
+    }
   },
 
   /* ── Tasks ── */
@@ -1153,15 +1225,38 @@ class CoworkApp:
     # P2 Chat + Plan
     # ------------------------------------------------------------------
 
+    # Contract appended to every prompt so the agent always ends with a
+    # human-readable summary visible in the chat UI.
+    _RESPONSE_CONTRACT = (
+        "\n\nIMPORTANT — available tools: The ONLY tools you may call are the ones "
+        "explicitly listed in your <system-defaults> block (run_shell, run_python, "
+        "list_files, read_file, write_file, patch_file, search, glob, delegate). "
+        "Do NOT call research-lookup, perplexity-search, or any other tool not in "
+        "that list — they do not exist in this environment and will always error. "
+        "For web access or news retrieval use run_shell with curl/wget, or "
+        "run_python with the requests library.\n\n"
+        "TOOL ARGUMENT RULES (violations cause immediate errors):\n"
+        "- run_python requires {\"code\": \"<inline python code as a string>\", \"timeout\": N}. "
+        "NEVER pass 'path', 'content', 'url', or 'class_' — only 'code'. "
+        "To run a saved script use run_shell: {\"command\": \"python script.py\"}.\n"
+        "- run_shell requires {\"command\": \"<shell command string>\", \"timeout\": N}. "
+        "NEVER pass 'path' or 'content' — only 'command'.\n\n"
+        "After completing all tool calls and actions, always finish with a concise "
+        "human-readable summary that includes: (1) what actions were taken, "
+        "(2) what files or data were created/modified, "
+        "(3) the key results or output the user should know about. "
+        "This summary is displayed directly to the user in a chat interface."
+    )
+
     def chat(self, message: str) -> dict:
         # Ground the agent with relevant workspace memory
         hits = self.mem.search(message, k=3)
         ctx_lines = [h.item.text for h in hits[:3]]
         if ctx_lines:
             ctx_block = "Workspace context:\n" + "\n".join(f"- {c}" for c in ctx_lines) + "\n\n"
-            prompt = ctx_block + message
+            prompt = ctx_block + message + self._RESPONSE_CONTRACT
         else:
-            prompt = message
+            prompt = message + self._RESPONSE_CONTRACT
 
         inv = CodeletInvocation(
             prompt=prompt,
@@ -1201,6 +1296,58 @@ class CoworkApp:
         audit(self.store, self.actor, "chat.message",
               metadata={"len": len(message), "source": source})
         return {"reply": reply, "context_hits": len(hits), "source": source}
+
+    def chat_stream(self, message: str, emit) -> None:
+        """Run codelet and stream SSE events: tool_start / tool_done / done."""
+        hits = self.mem.search(message, k=3)
+        ctx_lines = [h.item.text for h in hits[:3]]
+        if ctx_lines:
+            ctx_block = "Workspace context:\n" + "\n".join(f"- {c}" for c in ctx_lines) + "\n\n"
+            prompt = ctx_block + message + self._RESPONSE_CONTRACT
+        else:
+            prompt = message + self._RESPONSE_CONTRACT
+
+        inv = CodeletInvocation(
+            prompt=prompt,
+            cwd=Path.cwd(),
+            approval="auto",
+            timeout=180.0,
+        )
+
+        _TOOL_RE = re.compile(r'^\[([\w_]+) output\]\s*$')
+        step: list[int] = [0]
+        cur_tool: list[str | None] = [None]
+        cur_lines: list[str] = []
+
+        def on_line(line: str) -> None:
+            stripped = line.rstrip('\n')
+            m = _TOOL_RE.match(stripped)
+            if m:
+                if cur_tool[0] is not None:
+                    content = "".join(cur_lines).rstrip()
+                    emit({"type": "tool_done", "tool": cur_tool[0], "n": step[0], "content": content})
+                    cur_lines.clear()
+                step[0] += 1
+                cur_tool[0] = m.group(1)
+                emit({"type": "tool_start", "tool": cur_tool[0], "n": step[0]})
+            elif cur_tool[0] is not None:
+                cur_lines.append(line)
+
+        result = self.engine.stream(inv, on_line=on_line)
+
+        # Flush last tool block
+        if cur_tool[0] is not None:
+            content = "".join(cur_lines).rstrip()
+            emit({"type": "tool_done", "tool": cur_tool[0], "n": step[0], "content": content})
+
+        final = result.final or ""
+        if not final and result.returncode == 0 and result.stdout.strip():
+            final = result.stdout.strip()
+        elif not final and result.returncode == -1:
+            final = "[timeout] The agent did not respond within 180 s."
+        emit({"type": "done", "reply": final})
+        audit(self.store, self.actor, "chat.message",
+              metadata={"len": len(message), "source": "stream"})
 
     def plan_tasks(self, prompt: str) -> dict:
         steps = [
@@ -1451,6 +1598,24 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_sse_stream(self, message: str) -> None:
+        """POST /api/chat/stream — respond with Server-Sent Events."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        def emit(data: dict) -> None:
+            try:
+                payload = ("data: " + json.dumps(data) + "\n\n").encode()
+                self.wfile.write(payload)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        self.app.chat_stream(message, emit)
+
     def _send_csv(self, text: str, filename: str = "audit_export.csv") -> None:
         body = text.encode()
         self.send_response(200)
@@ -1536,6 +1701,8 @@ class _Handler(BaseHTTPRequestHandler):
         p = self._parts(path)
         body = self._read_json()
 
+        if p == ["api", "chat", "stream"]:
+            return self._send_sse_stream(str(body.get("message", "")))
         if p == ["api", "chat"]:
             return self._send_json(self.app.chat(str(body.get("message", ""))))
         if p == ["api", "memory", "search"]:
@@ -1651,14 +1818,22 @@ class _Handler(BaseHTTPRequestHandler):
 # Public API
 # ---------------------------------------------------------------------------
 
-def _make_server(app: CoworkApp, host: str, port: int) -> HTTPServer:
+class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """HTTPServer that handles each request in its own thread.
+
+    Required so a long-running SSE stream does not block other requests.
+    """
+    daemon_threads = True
+
+
+def _make_server(app: CoworkApp, host: str, port: int) -> _ThreadingHTTPServer:
     """Create (but do not start) an HTTPServer bound to *app*."""
 
     class BoundHandler(_Handler):
         pass
 
     BoundHandler.app = app
-    return HTTPServer((host, port), BoundHandler)
+    return _ThreadingHTTPServer((host, port), BoundHandler)
 
 
 def serve(

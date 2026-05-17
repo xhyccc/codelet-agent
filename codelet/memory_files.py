@@ -29,9 +29,13 @@ import re
 from pathlib import Path
 
 
-# Default discovery roots. Tests override these by passing explicit lists.
-DEFAULT_GLOBAL_ROOTS = ["/etc/mini-coding-agent"]
-DEFAULT_USER_ROOTS = ["~/.claude", "~/.mini-coding-agent"]
+# Default discovery roots. Empty by default — nothing is auto-loaded from
+# global or user home directories unless the config explicitly sets these.
+# (Previous defaults pointed at /etc/mini-coding-agent and ~/.claude which
+# caused ~/.claude/AGENTS.md, Claude Code's skill registry, to bleed into
+# codelet's context.)
+DEFAULT_GLOBAL_ROOTS = []
+DEFAULT_USER_ROOTS = []
 DEFAULT_PROJECT_PATHS = [
     ".claude/rules",          # directory - all *.md inside
     ".mini-coding-agent/rules.md",

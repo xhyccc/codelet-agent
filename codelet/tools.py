@@ -608,7 +608,13 @@ def tool_argument_validators(agent, name, args):
     if name == "list_files":
         path = agent.path(args.get("path", "."))
         if not path.is_dir():
-            raise ValueError("path is not a directory")
+            if not path.exists():
+                top = sorted(p.name for p in agent.root.iterdir() if p.is_dir())[:12]
+                raise ValueError(
+                    f"path '{args.get('path')}' does not exist. "
+                    f"Top-level directories: {', '.join(top)}"
+                )
+            raise ValueError("path is not a directory (it is a file)")
         return
 
     if name == "read_file":

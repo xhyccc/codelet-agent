@@ -98,9 +98,18 @@ def render_skill_manifest(skills: List[Skill]) -> str:
     """Render the short name+description listing for the prompt prefix."""
     if not skills:
         return ""
-    lines = ["Available skills (call load_skill(name) to fetch body):"]
+    lines = [
+        "<skills>",
+        "IMPORTANT: skill names are NOT callable tools.",
+        "To use a skill you MUST first call load_skill(name=\"<skill-name>\") to",
+        "retrieve its instructions, then follow those instructions.",
+        "Never call a skill name directly as a tool — it will always fail.",
+        "",
+        "Available skills:",
+    ]
     for s in skills:
         lines.append(s.manifest())
+    lines.append("</skills>")
     return "\n".join(lines)
 
 
