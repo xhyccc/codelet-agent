@@ -154,6 +154,18 @@ details.tb-ok>summary.tbl{list-style:none;user-select:none;cursor:pointer}
 .tpre-err{color:#ff8787}
 .msg-text{margin:.15rem 0}
 .ic{background:var(--s);border:1px solid var(--b);border-radius:3px;padding:.04rem .28rem;font-family:monospace;font-size:.82em}
+.step-list{display:flex;flex-direction:column;gap:.18rem;margin:.25rem 0 .55rem}
+.step-item{border-radius:5px;border:1px solid rgba(255,255,255,.07);overflow:hidden;background:#0a0d14}
+.step-err{border-color:#5c1a1a;background:#150808}
+.step-hdr{display:flex;align-items:center;gap:.4rem;padding:.22rem .6rem;font-size:.68rem;cursor:pointer;list-style:none;user-select:none;color:#566580}
+.step-hdr:hover{background:rgba(255,255,255,.03)}
+details.step-item>summary.step-hdr{list-style:none}
+.step-icon{font-size:.72rem;flex-shrink:0}
+.step-tool{font-weight:700;color:#6a85a8;font-family:monospace;font-size:.7rem}
+.step-brief{color:#3e4f64;font-size:.64rem;font-family:monospace}
+.step-num{margin-left:auto;color:#2e3d52;font-size:.6rem;font-family:monospace;flex-shrink:0}
+.step-body{background:#060810;padding:.38rem .62rem;font-family:'JetBrains Mono',monospace;font-size:.67rem;color:#667a96;white-space:pre-wrap;word-break:break-all;max-height:180px;overflow-y:auto;line-height:1.45}
+.msg-reply{padding-top:.35rem;border-top:1px solid rgba(255,255,255,.055);margin-top:.1rem}
 .kanban{display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem;margin-bottom:.9rem}
 .kb-col{background:var(--s);border:1px solid var(--b);border-radius:8px;padding:.65rem}
 .kb-col-h{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--m);margin-bottom:.5rem;display:flex;align-items:center;gap:.35rem}
@@ -477,27 +489,42 @@ const App = {
   formatMsg(raw){
     const E=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const md=s=>E(s).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`([^`\n]+)`/g,'<code class="ic">$1</code>').replace(/\n/g,'<br>');
-    const segs=raw.split(/(?=\[run_shell output\])/);
-    let out='';
-    for(const seg of segs){
-      if(!seg.startsWith('[run_shell output]')){
-        const t=seg.trim();if(t)out+=`<div class="msg-text">${md(t)}</div>`;
-        continue;
-      }
-      const body=seg.slice('[run_shell output]'.length).trim();
-      if(body.startsWith('error:')){
-        out+=`<div class="tb tb-err"><span class="tbl">&#9888; error</span><pre class="tpre">${E(body.replace(/^error:\s*/,''))}</pre></div>`;
-        continue;
-      }
-      const ecM=body.match(/exit_code:\s*(\d+)/),stdM=body.match(/stdout:\s*([\s\S]*?)(?=\s*stderr:|$)/),errM=body.match(/stderr:\s*([\s\S]*)$/);
-      const ec=ecM?ecM[1]:'?',stdout=(stdM?stdM[1]:'').trim(),stderr=(errM?errM[1]:'').trim();
-      const hasOut=stdout&&stdout!=='(empty)',hasErr=stderr&&stderr!=='(empty)';
-      const lines=hasOut?stdout.split('\n').length:0;
-      out+=`<details class="tb tb-ok"><summary class="tbl">&#128032; shell &mdash; exit ${ec}${lines?' &middot; '+lines+' lines':''}</summary>`;
-      if(hasOut)out+=`<pre class="tpre">${E(stdout)}</pre>`;
-      if(hasErr)out+=`<pre class="tpre tpre-err">${E(stderr)}</pre>`;
-      out+='</details>';
+    // Split on any [tool_name output] marker (generic)
+    const parts=raw.split(/(?=\[[\w_]+ output\])/);
+    const steps=[];let finalText='';
+    for(const p of parts){
+      const m=p.match(/^\[([\w_]+) output\]([\s\S]*)/);
+      if(m){steps.push({tool:m[1],content:m[2].trim()})}
+      else{const t=p.trim();if(t)finalText+=(finalText?'\n':'')+t;}
     }
+    let out='';
+    if(steps.length){
+      out+='<div class="step-list">';
+      steps.forEach((s,i)=>{
+        const isErr=s.content.startsWith('error:');
+        const icon=isErr?'&#9888;':'&#9881;';
+        // compute brief summary
+        let brief='';
+        if(!isErr){
+          if(s.tool==='run_shell'){
+            const ecM=s.content.match(/exit_code:\s*(\d+)/),stM=s.content.match(/stdout:\s*([\s\S]*?)(?=\s*stderr:|$)/);
+            const ec=ecM?ecM[1]:'?',sout=(stM?stM[1]:'').trim();
+            const lines=sout&&sout!=='(empty)'?sout.split('\n').filter(l=>l).length:0;
+            brief=`exit ${ec}${lines?' &middot; '+lines+' lines':''}`;
+          } else {
+            const lines=s.content.split('\n').filter(l=>l.trim()).length;
+            brief=lines?`${lines} lines`:'';
+          }
+        } else {
+          brief=E(s.content.replace(/^error:\s*/,'').slice(0,60))+(s.content.length>60?'&hellip;':'');
+        }
+        out+=`<details class="step-item${isErr?' step-err':''}">`;
+        out+=`<summary class="step-hdr"><span class="step-icon">${icon}</span><span class="step-tool">${E(s.tool)}</span>${brief?`<span class="step-brief">${brief}</span>`:''}<span class="step-num">#${i+1}</span></summary>`;
+        out+=`<pre class="step-body">${E(s.content)}</pre></details>`;
+      });
+      out+='</div>';
+    }
+    if(finalText.trim())out+=`<div class="msg-text${steps.length?' msg-reply':''}">${md(finalText.trim())}</div>`;
     return out||E(raw);
   },
   renderMsgs(){
