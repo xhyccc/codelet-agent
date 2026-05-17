@@ -62,6 +62,21 @@ def client():
     server.server_close()
 
 
+@pytest.fixture(scope="module")
+def seeded_client():
+    """Client backed by an app pre-populated with a few memory entries."""
+    port = _free_port()
+    app = CoworkApp()
+    app.mem.add("New product launch scheduled for Q3.", item_id="t1")
+    app.mem.add("Quarterly sales were up 12% YoY.", item_id="t2")
+    server = _make_server(app, "127.0.0.1", port)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    yield _Client(f"http://127.0.0.1:{port}")
+    server.shutdown()
+    server.server_close()
+
+
 # ---------------------------------------------------------------------------
 # HTML shell
 # ---------------------------------------------------------------------------
@@ -142,14 +157,14 @@ def test_audit_entry_fields(client):
 # /api/memory/search
 # ---------------------------------------------------------------------------
 
-def test_memory_search_returns_hits(client):
-    d = client.post_json("/api/memory/search", {"query": "product launch", "k": 3})
+def test_memory_search_returns_hits(seeded_client):
+    d = seeded_client.post_json("/api/memory/search", {"query": "product launch", "k": 3})
     assert "hits" in d
     assert len(d["hits"]) > 0
 
 
-def test_memory_search_hit_fields(client):
-    hits = client.post_json("/api/memory/search", {"query": "sales"})["hits"]
+def test_memory_search_hit_fields(seeded_client):
+    hits = seeded_client.post_json("/api/memory/search", {"query": "sales"})["hits"]
     assert hits
     h = hits[0]
     assert "text" in h and "score" in h and "id" in h
