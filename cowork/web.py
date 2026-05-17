@@ -21,6 +21,7 @@ import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Optional
 
 from .admin import (
@@ -28,6 +29,7 @@ from .admin import (
 )
 from .artifacts_store import ArtifactVersion, ArtifactVersionStore
 from .collab import FileLockManager
+from .engine import CodeletEngine, CodeletInvocation
 from .events import Event, EventBus, workspace_channel
 from .guardrails import DiffReview, GuardrailEngine, PayloadWarning
 from .memory import MemoryStore
@@ -860,6 +862,8 @@ class CoworkApp:
         ]:
             self.registry.register(c)
 
+        self.engine = CodeletEngine()
+
         self.lock_mgr = FileLockManager(default_ttl=60)
         self.swarm = SwarmOrchestrator(
             workspace_id=self.workspace.id, lock_manager=self.lock_mgr
@@ -1047,14 +1051,40 @@ class CoworkApp:
     # ------------------------------------------------------------------
 
     def chat(self, message: str) -> dict:
+        # Ground the agent with relevant workspace memory
         hits = self.mem.search(message, k=3)
-        if hits:
-            ctx = " | ".join(h.item.text for h in hits[:2])
-            reply = f"Based on workspace context: {ctx[:300]}"
+        ctx_lines = [h.item.text for h in hits[:3]]
+        if ctx_lines:
+            ctx_block = "Workspace context:\n" + "\n".join(f"- {c}" for c in ctx_lines) + "\n\n"
+            prompt = ctx_block + message
         else:
-            reply = "I don't have specific information about that in the workspace context."
-        audit(self.store, self.actor, "chat.message", metadata={"len": len(message)})
-        return {"reply": reply, "context_hits": len(hits)}
+            prompt = message
+
+        inv = CodeletInvocation(
+            prompt=prompt,
+            cwd=Path.cwd(),
+            approval="auto",
+            timeout=60.0,
+        )
+        result = self.engine.run(inv)
+
+        if result.final:
+            reply = result.final
+            source = "agent"
+        elif result.returncode == 0 and result.stdout.strip():
+            reply = result.stdout.strip()[:4000]
+            source = "agent"
+        else:
+            # Agent unavailable (not configured / no API key) — surface memory context
+            if ctx_lines:
+                reply = "[agent unavailable] Workspace context: " + " | ".join(ctx_lines[:2])
+            else:
+                reply = "Agent unavailable. Check your codelet configuration (API key / model)."
+            source = "fallback"
+
+        audit(self.store, self.actor, "chat.message",
+              metadata={"len": len(message), "source": source})
+        return {"reply": reply, "context_hits": len(hits), "source": source}
 
     def plan_tasks(self, prompt: str) -> dict:
         steps = [
