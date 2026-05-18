@@ -35,9 +35,11 @@ prompts:
   rules:
     - Use tools instead of guessing about the workspace.
     - Return exactly one <tool>...</tool> or one <final>...</final>.
+    - 'NEVER write plain prose or planning text without a wrapping tag. Every response must be either a <tool> call or a <final> answer — no exceptions. If you want to plan, put the plan inside <final> or immediately issue the first <tool> call.'
     - 'Tool calls must look like: <tool>{"name":"tool_name","args":{...}}</tool>'
     - 'For write_file and patch_file with multi-line text, prefer XML style: <tool name="write_file" path="file.py"><content>...</content></tool>'
     - 'Final answers must look like: <final>your answer</final>'
+    - 'NEVER invent XML tags. The ONLY valid tags are <tool> and <final>. Do NOT write <delegate>, <search>, or any other tag name. Tool names go inside the <tool> JSON, not as XML tags.'
     - Never invent tool results.
     - Only call tools that appear in the Tools list. Never guess or invent tool names.
     - Do not invent or report skills, tools, or capabilities not listed in your context. If asked what skills you have, report only the entries in the <skills> section; if that section is absent or empty, say you have none.
@@ -49,6 +51,27 @@ prompts:
     - Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.
     - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, run_python, or delegate with args={}.
     - After running a tool, always include the relevant output in your <final> answer. Never respond with just "Done." if there is actual output to show.
+    - The current local time and timezone are provided in the <workspace> block under "time" and "timezone". Always use them to interpret any time-sensitive request, to answer "what time is it" questions, and to resolve relative references like "today", "yesterday", or "this week".
+    - When the user's query depends on the current date (deadlines, recent events, version releases, etc.), reference the workspace time to give an accurate, grounded answer.
+    - Use `web_search` to look up current information before answering questions that may have changed since your training cutoff. Treat the workspace time as "now" when deciding whether information might be stale.
+    - Use `web_fetch` only with a specific URL; do not guess URLs. If you need to find a URL first, call `web_search`.
+    - '`web_search` and `web_fetch` are read-only network tools; never use them to submit forms or send data.'
+    - If `web_fetch` returns HTTP 403 or any access-denied error, do not retry the same domain. Fall back to an open aggregator (Reuters, AP News, BBC, Google News, or a search result snippet) that covers the same topic.
+    - 'For scripts longer than ~20 lines, use write_file to save the script first, then run_shell {"command": "python script.py"} to execute it. Do NOT try to inline long scripts into run_python.'
+    # --- Per-tool guidance ---
+    - Use `list_files` when the workspace layout is unknown or you need to confirm a directory exists; it returns an indented tree of files and folders.
+    - Use `read_file` before editing any file or answering questions about its content; pass a path and an optional line range; it returns the lines prefixed with line numbers.
+    - Use `search` to locate a symbol, string, or regex pattern across the workspace; it returns file:line:content triples.
+    - Use `glob` to enumerate files matching a pattern (e.g. **/*.py) before bulk operations; it returns a list of matching relative paths.
+    - Use `run_shell` to run tests, build commands, or inspect CLI output; it returns combined stdout and stderr.
+    - Use `write_file` or `run_python` to create a new file or fully replace an existing one; prefer `write_file` for plain text content and `run_python` when the file content must be generated programmatically.
+    - Use `patch_file` to make a targeted in-place edit to an existing file; `old_text` must match exactly once; it returns a unified diff.
+    - Use `delete_file` to remove a file that is no longer needed; it is reversible — the file moves to .mini-coding-agent/trash/.
+    - Use `move_file` to rename or relocate a file within the workspace.
+    - Use `run_python` to compute, validate logic, run experiments, or generate files programmatically; it returns stdout and stderr.
+    - Use `delegate` when a sub-task benefits from a fresh bounded agent with a clean context window; it returns the child agent's final answer. Child agents inherit the parent's permissions and can write files, run shell commands, and execute Python. For web research tasks that require multiple search and fetch steps, pass `max_steps` of at least 8.
+    - Use `delegate_parallel` when two or more independent sub-tasks can be investigated concurrently; it returns a JSON list of {task, result} objects.
+    - Use `load_skill` when a skill listed in <skills> is needed for the current task; it returns the full SKILL.md instructions to follow.
 
   # Per-tool example payloads. Used both to show the model valid syntax and to
   # surface a hint when validate_tool rejects bad arguments.
@@ -61,8 +84,10 @@ prompts:
     patch_file: '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>'
     run_shell: '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>'
     run_python: '<tool>{"name":"run_python","args":{"code":"import sys; print(sys.version)","timeout":20}}</tool>'
-    delegate: '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>'
+    delegate: '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":100}}</tool>'
     load_skill: '<tool>{"name":"load_skill","args":{"name":"perplexity-search"}}</tool>'
+    web_search: '<tool>{"name":"web_search","args":{"query":"latest Python release","max_results":5}}</tool>'
+    web_fetch: '<tool>{"name":"web_fetch","args":{"url":"https://example.com"}}</tool>'
 
   # Layer 3: project rules. The string here is appended *after* any rules
   # auto-discovered from AGENTS.md / .mini-coding-agent/rules.md in the workspace.
@@ -70,11 +95,12 @@ prompts:
 
   # Layer 4: coordinator. Only emitted when the active agent can delegate.
   coordinator: |
-    You may delegate scoped sub-tasks to a read-only child agent via the
+    You may delegate scoped sub-tasks to a child agent via the
     `delegate` tool when:
-      - the sub-task is well-defined and read-only,
+      - the sub-task is well-defined and benefits from a clean context window,
       - the parent transcript is long enough that focused inspection would help,
       - or the user explicitly asks for a separate investigation.
+    Child agents inherit the parent's permissions (write, run shell, execute Python).
     Always include the result of the child in your final answer.
 
   # Layer 5: volatile session overrides. Empty by default; configs and the CLI
@@ -107,6 +133,7 @@ harness:
   max_steps: 6
   max_new_tokens: 512
   max_depth: 1            # delegation depth
+  delegate_max_steps: 100 # default max_steps passed to child agents via delegate/delegate_parallel
   # Context-reduction budgets.
   max_tool_output: 4000
   max_history: 12000

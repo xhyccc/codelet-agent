@@ -37,7 +37,7 @@ HELP_DETAILS = "\n".join(
 MAX_TOOL_OUTPUT = 4000
 MAX_HISTORY = 12000
 IGNORED_PATH_NAMES = {".git", ".mini-coding-agent", "__pycache__", ".pytest_cache", ".ruff_cache", ".venv", "venv"}
-ALL_TOOL_OPS = frozenset({"read", "write", "bash", "python"})
+ALL_TOOL_OPS = frozenset({"read", "write", "bash", "python", "net"})
 
 
 def now():

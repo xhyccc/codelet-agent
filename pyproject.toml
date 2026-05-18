@@ -9,6 +9,7 @@ description = "Minimal standalone coding agent backed by Ollama or any OpenAI-co
 requires-python = ">=3.10"
 dependencies = [
     "pytest>=9.0.2",
+    "playwright>=1.40.0",
 ]
 
 [project.optional-dependencies]

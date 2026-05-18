@@ -98,6 +98,15 @@ def parse_model_output(raw, retry_template):
         if payload is not None:
             return "tool", payload
         return "retry", retry_notice(retry_template)
+    # If the output contains any XML-like tag that is NOT <tool> or <final>,
+    # the model invented a shorthand (e.g. <delegate>, <search>).  Ask
+    # it to retry with the correct format instead of silently treating it as a
+    # final answer.
+    if re.search(r'<[a-zA-Z]', raw) and "<final>" not in raw:
+        return "retry", retry_notice(
+            retry_template,
+            ": do not invent XML tags. Use only <tool>{\"name\":\"...\",\"args\":{...}}</tool> or <final>...</final>",
+        )
     if "<final>" in raw:
         final = extract(raw, "final").strip()
         if final:
@@ -105,5 +114,10 @@ def parse_model_output(raw, retry_template):
         return "retry", retry_notice(retry_template, "model returned an empty <final> answer")
     raw = raw.strip()
     if raw:
-        return "final", raw
+        return "retry", retry_notice(
+            retry_template,
+            ": response must be wrapped in <tool>...</tool> or <final>...</final>. "
+            "Do NOT write plain prose. If you are planning, start the plan inside "
+            "<final> or issue the first <tool> call immediately",
+        )
     return "retry", retry_notice(retry_template, "model returned an empty response")

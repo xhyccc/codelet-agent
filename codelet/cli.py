@@ -309,10 +309,12 @@ def _post_process_args(args):
 
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
-    args = _post_process_args(args)
-
+    # Resolve approval before _post_process_args so the harness-config fallback
+    # inside that function (which always writes "ask") doesn't shadow the
+    # auto-approval logic for one-shot prompts.
     if args.approval is None:
         args.approval = "auto" if args.prompt else "ask"
+    args = _post_process_args(args)
 
     agent = build_agent(args)
 
