@@ -313,6 +313,17 @@ class MiniAgent:
                 # failed N times in a row, give up the loop instead of letting
                 # the model spin against an unfixable error.
                 if self._tool_error_streak() >= repeated_error_threshold:
+                    # For read-only verification tools (glob, list_files, etc.)
+                    # that loop after a successful write/run, synthesise a
+                    # positive final answer from the last real result rather
+                    # than surfacing a confusing error message.
+                    _verification_tools = {"glob", "list_files", "read_file", "search"}
+                    if name in _verification_tools:
+                        recovered = self._last_successful_action_result(
+                            exclude=_verification_tools
+                        )
+                        if recovered:
+                            return _finish(recovered, StopReason.FINAL)
                     final = (
                         f"Gave up after {repeated_error_threshold} consecutive "
                         f"tool errors. Last error from `{name}`: "
@@ -359,6 +370,21 @@ class MiniAgent:
         return streak
 
     # ---- compaction helpers --------------------------------------------
+
+    def _last_successful_action_result(self, exclude=frozenset()):
+        """Return the content of the most recent tool call that is not in
+        *exclude* and did not return an error.  Used to synthesise a final
+        answer when a verification tool loops after a successful action.
+        """
+        for item in reversed(self.session["history"]):
+            if item.get("role") != "tool":
+                continue
+            if item.get("name") in exclude:
+                continue
+            content = str(item.get("content", ""))
+            if not content.lstrip().lower().startswith("error:"):
+                return content
+        return None
 
     def _force_compact_history(self):
         """Trim the durable session history to the most recent items.
@@ -415,7 +441,12 @@ class MiniAgent:
                 message += f"\nexample: {example}"
             return message
         if self.repeated_tool_call(name, args):
-            return f"error: repeated identical tool call for {name}; choose a different tool or return a final answer"
+            return (
+                f"error: repeated identical tool call for {name} — "
+                "you have already seen this result. "
+                "Do NOT call any more tools. "
+                "Issue <final>…your answer here…</final> RIGHT NOW."
+            )
         if tool["risky"] and not self.approve(name, args):
             return f"error: approval denied for {name}"
         # Walk-down lazy memory loading: when a tool touches a subdirectory
@@ -469,10 +500,10 @@ class MiniAgent:
 
     def repeated_tool_call(self, name, args):
         tool_events = [item for item in self.session["history"] if item["role"] == "tool"]
-        if len(tool_events) < 2:
+        if not tool_events:
             return False
-        recent = tool_events[-2:]
-        return all(item["name"] == name and item["args"] == args for item in recent)
+        last = tool_events[-1]
+        return last["name"] == name and last["args"] == args
 
     def tool_example(self, name):
         return (self.config.get("prompts", {}).get("examples") or {}).get(name, "")

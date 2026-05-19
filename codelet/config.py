@@ -46,12 +46,14 @@ BUILTIN_DEFAULTS = {
             "Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.",
             "Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, run_python, or delegate with args={}.",
             'After running a tool, always include the relevant output in your <final> answer. Never respond with just "Done." if there is actual output to show.',
-            'The current local time and timezone are provided in the <workspace> block under "time" and "timezone". Always use them to interpret any time-sensitive request, to answer "what time is it" questions, and to resolve relative references like "today", "yesterday", or "this week".',
+            "Once the task outcome is confirmed \u2014 a file-creation tool reports success, or `glob`/`list_files` shows the expected file \u2014 issue `<final>` immediately. Do not call additional verification tools after a successful confirmation.",
+            'The current local time and timezone are provided in the workspace block under "time" and "timezone". Always use them to interpret any time-sensitive request, to answer "what time is it" questions, and to resolve relative references like "today", "yesterday", or "this week".',
             "When the user's query depends on the current date (deadlines, recent events, version releases, etc.), reference the workspace time to give an accurate, grounded answer.",
-            "Use `web_search` to look up current information before answering questions that may have changed since your training cutoff. Treat the workspace time as \"now\" when deciding whether information might be stale.",
+            'Use `web_search` to look up current information before answering questions that may have changed since your training cutoff. Treat the workspace time as "now" when deciding whether information might be stale.',
             "Use `web_fetch` only with a specific URL; do not guess URLs. If you need to find a URL first, call `web_search`.",
             "`web_search` and `web_fetch` are read-only network tools; never use them to submit forms or send data.",
             "If `web_fetch` returns HTTP 403 or any access-denied error, do not retry the same domain. Fall back to an open aggregator (Reuters, AP News, BBC, Google News, or a search result snippet) that covers the same topic.",
+            "If `web_fetch` returns a site homepage or navigation page (mostly menus, category links, and one-line teasers rather than full article text), extract the specific article URLs from the content and fetch 3-5 of them individually to get the actual stories. Do not summarize or generate output from a bare navigation page \u2014 that is not article content.",
             'For scripts longer than ~20 lines, use write_file to save the script first, then run_shell {"command": "python script.py"} to execute it. Do NOT try to inline long scripts into run_python.',
             "Use `list_files` when the workspace layout is unknown or you need to confirm a directory exists; it returns an indented tree of files and folders.",
             "Use `read_file` before editing any file or answering questions about its content; pass a path and an optional line range; it returns the lines prefixed with line numbers.",
@@ -83,11 +85,12 @@ BUILTIN_DEFAULTS = {
         },
         "project_rules": "",
         "coordinator": (
-            "You may delegate scoped sub-tasks to a read-only child agent via the\n"
+            "You may delegate scoped sub-tasks to a child agent via the\n"
             "`delegate` tool when:\n"
-            "  - the sub-task is well-defined and read-only,\n"
+            "  - the sub-task is well-defined and benefits from a clean context window,\n"
             "  - the parent transcript is long enough that focused inspection would help,\n"
             "  - or the user explicitly asks for a separate investigation.\n"
+            "Child agents inherit the parent's permissions (write, run shell, execute Python).\n"
             "Always include the result of the child in your final answer.\n"
         ),
         "override": "",

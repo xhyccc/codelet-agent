@@ -9,8 +9,23 @@ Three small clients with a shared ``complete(prompt, max_new_tokens)`` API:
 """
 
 import json
+import time
 import urllib.error
 import urllib.request
+
+_MAX_RETRIES = 3  # number of retries after the initial attempt
+
+
+def _with_retries(fn):
+    """Call fn() and retry up to _MAX_RETRIES times on any exception,
+    with exponential back-off (1 s, 2 s, 4 s …)."""
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return fn()
+        except Exception:
+            if attempt == _MAX_RETRIES:
+                raise
+            time.sleep(2 ** attempt)
 
 
 class FakeModelClient:
@@ -38,6 +53,9 @@ class OllamaModelClient:
         self.timeout = timeout
 
     def complete(self, prompt, max_new_tokens):
+        return _with_retries(lambda: self._do_complete(prompt, max_new_tokens))
+
+    def _do_complete(self, prompt, max_new_tokens):
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -87,6 +105,9 @@ class OpenAIModelClient:
         self.timeout = timeout
 
     def complete(self, prompt, max_new_tokens):
+        return _with_retries(lambda: self._do_complete(prompt, max_new_tokens))
+
+    def _do_complete(self, prompt, max_new_tokens):
         try:
             import openai as _openai
         except ImportError:

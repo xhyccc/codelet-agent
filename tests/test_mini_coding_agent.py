@@ -235,7 +235,7 @@ def test_repeated_identical_tool_call_is_rejected(tmp_path):
 
     result = agent.run_tool("list_files", {})
 
-    assert result == "error: repeated identical tool call for list_files; choose a different tool or return a final answer"
+    assert "repeated identical tool call" in result
 
 
 def test_welcome_screen_keeps_box_shape_for_long_paths(tmp_path):

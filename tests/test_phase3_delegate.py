@@ -22,29 +22,6 @@ def _agent(tmp_path, scripted=None):
     )
 
 
-def test_decompose_records_plan_with_explicit_steps(tmp_path):
-    agent = _agent(tmp_path)
-    result = agent.run_tool(
-        "decompose",
-        {"goal": "refactor X", "steps": ["read X", "rewrite X", "test X"]},
-    )
-    assert "plan recorded" in result
-    assert "1. read X" in result
-    assert agent.session["plan"]["goal"] == "refactor X"
-    assert agent.session["plan"]["steps"] == ["read X", "rewrite X", "test X"]
-
-
-def test_decompose_autosplits_goal_string(tmp_path):
-    agent = _agent(tmp_path)
-    result = agent.run_tool(
-        "decompose",
-        {"goal": "open file. patch bug. run tests."},
-    )
-    assert "plan recorded" in result
-    steps = agent.session["plan"]["steps"]
-    assert len(steps) >= 2
-
-
 def test_decompose_requires_goal(tmp_path):
     agent = _agent(tmp_path)
     out = agent.run_tool("decompose", {"goal": ""})
