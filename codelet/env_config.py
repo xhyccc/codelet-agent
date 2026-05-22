@@ -43,6 +43,7 @@ The loader is implemented with the standard library only.
 from __future__ import annotations
 
 import os
+import shlex
 from pathlib import Path
 
 
@@ -80,18 +81,22 @@ def parse_env_file(path):
             line = line[len("export "):].lstrip()
         if "=" not in line:
             continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if not key:
+        try:
+            lexer = shlex.shlex(line, posix=True)
+            lexer.whitespace_split = True
+            tokens = list(lexer)
+            if not tokens:
+                continue
+            parsed_line = " ".join(tokens)
+            if "=" not in parsed_line:
+                continue
+            key, _, value = parsed_line.partition("=")
+            key = key.strip()
+            if not key:
+                continue
+            out[key] = value.strip()
+        except ValueError:
             continue
-        # Strip trailing inline comment when value is unquoted.
-        if value and value[0] not in {"'", '"'} and "#" in value:
-            value = value.split("#", 1)[0].rstrip()
-        # Strip surrounding quotes.
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        out[key] = value
     return out
 
 

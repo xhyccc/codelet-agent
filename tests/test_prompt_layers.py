@@ -59,12 +59,15 @@ def test_prefix_contains_six_named_xml_layers(tmp_path):
 def test_layer_order_is_immutable_first_volatile_last(tmp_path):
     agent = make_agent(tmp_path)
     prefix = agent.prefix
-    # All present layers must appear in this exact order:
+    # All present layers must appear in this exact order.  Use "<tag>\n" to
+    # avoid false positives from rule text that happens to mention a tag name
+    # (e.g. "… provided in the <workspace> block …").  _wrap() always emits
+    # "<tag>\n<body>\n</tag>", so the opening tag is always followed by '\n'.
     expected_order = [
-        "<agent-identity>",
-        "<system-defaults>",
-        "<coordinator>",
-        "<workspace>",
+        "<agent-identity>\n",
+        "<system-defaults>\n",
+        "<coordinator>\n",
+        "<workspace>\n",
     ]
     positions = [prefix.find(tag) for tag in expected_order]
     assert all(p >= 0 for p in positions), positions
