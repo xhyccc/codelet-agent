@@ -5,6 +5,15 @@ import os
 import sys
 from pathlib import Path
 
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.table import Table
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.styles import Style
+
 from .agent import MiniAgent
 from .clients import OllamaModelClient, OpenAIModelClient
 from .config import deep_merge, discover_workspace_config, load_config
@@ -15,11 +24,21 @@ from .utils import HELP_DETAILS
 from .welcome import build_welcome
 from .workspace import WorkspaceContext
 
+console = Console()
+
+_SLASH_COMMANDS = ["/exit", "/quit", "/help", "/memory", "/session", "/reset"]
+
 
 def _make_tool_output_callback():
-    """Return a callback that prints tool output to stdout after each tool call."""
+    """Return a callback that prints tool output in a styled panel after each tool call."""
     def callback(name, result):
-        print(f"\n[{name} output]\n{result}")
+        panel = Panel(
+            str(result).strip(),
+            title=f"🔧 Tool Execution: {name}",
+            style="dim",
+            border_style="black",
+        )
+        console.print(panel)
     return callback
 
 
@@ -322,24 +341,38 @@ def main(argv=None):
     if getattr(args, "provider", None):
         backend_label = f"{args.backend} ({args.provider})"
     if not args.no_welcome and not getattr(args, "undercover", False):
-        print(build_welcome(agent, model=args.model, backend=backend_label))
+        welcome_text = build_welcome(agent, model=args.model, backend=backend_label)
+        console.print(Panel(welcome_text, title="🚀 Codelet Agent", border_style="blue"))
 
     if args.prompt:
         prompt = " ".join(args.prompt).strip()
         if prompt:
-            print()
+            console.print()
             try:
-                print(agent.ask(prompt))
+                with console.status("[bold green]Thinking...", spinner="dots"):
+                    response = agent.ask(prompt)
+                console.print(Markdown(response))
             except RuntimeError as exc:
-                print(str(exc), file=sys.stderr)
+                console.print(str(exc), style="bold red")
                 return 1
         return 0
 
+    # Set up prompt_toolkit session with slash-command autocomplete.
+    _command_completer = WordCompleter(_SLASH_COMMANDS, ignore_case=True)
+    _prompt_style = Style.from_dict({"prompt": "ansicyan bold"})
+    # Fall back to plain input() when stdin is not a tty (e.g. CI/piped input).
+    use_prompt_toolkit = sys.stdin.isatty()
+    if use_prompt_toolkit:
+        prompt_session = PromptSession(completer=_command_completer, style=_prompt_style)
+
     while True:
         try:
-            user_input = input("\ncodelet> ").strip()
+            if use_prompt_toolkit:
+                user_input = prompt_session.prompt("\ncodelet> ").strip()
+            else:
+                user_input = input("\ncodelet> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("")
+            console.print("")
             return 0
 
         if not user_input:
@@ -347,21 +380,31 @@ def main(argv=None):
         if user_input in {"/exit", "/quit"}:
             return 0
         if user_input == "/help":
-            print(HELP_DETAILS)
+            console.print(Panel(Markdown(HELP_DETAILS), title="Help", border_style="cyan"))
             continue
         if user_input == "/memory":
-            print(agent.memory_text())
+            memory = agent.session["memory"]
+            table = Table(title="Agent Working Memory", show_lines=True)
+            table.add_column("Key", style="cyan", no_wrap=True)
+            table.add_column("Value")
+            table.add_row("Task", memory.get("task") or "-")
+            table.add_row("Files", ", ".join(memory.get("files", [])) or "-")
+            notes = memory.get("notes", [])
+            table.add_row("Notes", "\n".join(f"• {n}" for n in notes) if notes else "-")
+            console.print(table)
             continue
         if user_input == "/session":
-            print(agent.session_path)
+            console.print(str(agent.session_path))
             continue
         if user_input == "/reset":
             agent.reset()
-            print("session reset")
+            console.print("[bold green]Session reset.[/bold green]")
             continue
 
-        print()
+        console.print()
         try:
-            print(agent.ask(user_input))
+            with console.status("[bold green]Thinking...", spinner="dots"):
+                response = agent.ask(user_input)
+            console.print(Markdown(response))
         except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
+            console.print(str(exc), style="bold red")
