@@ -17,10 +17,12 @@ Three coordination modes:
 from __future__ import annotations
 
 import graphlib
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
 
-from .collab import FileLockManager, LockError
+from .collab import FileLock, FileLockManager, LockError
 
 
 # A runner takes (task_id, prompt, context) and returns a string result.
@@ -98,6 +100,19 @@ class SequentialOrchestrator:
         results: dict[str, TaskResult] = {}
         for tid in sorter.static_order():
             t = by_id[tid]
+            # If any dependency failed or was blocked, mark this task as blocked
+            # and continue so that independent branches still execute.
+            failed_deps = [
+                d for d in t.depends_on
+                if d in results and results[d].error is not None
+            ]
+            if failed_deps:
+                results[t.id] = TaskResult(
+                    task_id=t.id,
+                    output="",
+                    error=f"blocked: dependency failed: {failed_deps[0]}",
+                )
+                continue
             ctx = dict(t.context)
             ctx["upstream"] = {
                 d: results[d].output for d in t.depends_on if d in results
@@ -107,8 +122,6 @@ class SequentialOrchestrator:
                 results[t.id] = TaskResult(task_id=t.id, output=out)
             except Exception as e:  # noqa: BLE001
                 results[t.id] = TaskResult(task_id=t.id, output="", error=str(e))
-                # Stop on first failure -- downstream tasks would have empty inputs.
-                break
         return results
 
 
@@ -136,6 +149,7 @@ class SwarmOrchestrator:
         self.workspace_id = workspace_id
         self.locks = lock_manager or FileLockManager(default_ttl=60)
         self.cards: dict[str, KanbanCard] = {}
+        self._active_locks: dict[str, FileLock] = {}
 
     def add(self, task: Task) -> None:
         self.cards[task.id] = KanbanCard(task=task)
@@ -145,9 +159,10 @@ class SwarmOrchestrator:
             if card.status != "pending":
                 continue
             try:
-                self.locks.acquire(self.workspace_id, f"task:{card.task.id}", worker)
+                lock = self.locks.acquire(self.workspace_id, f"task:{card.task.id}", worker)
             except LockError:
                 continue
+            self._active_locks[card.task.id] = lock
             card.status = "claimed"
             card.worker = worker
             return card
@@ -163,6 +178,38 @@ class SwarmOrchestrator:
         card.status = "failed"
         card.error = error
 
+    def _run_task_with_refresh(self, runner: Runner, card: KanbanCard, lock: Optional[FileLock]) -> str:
+        """Run *runner* in a worker thread while periodically refreshing *lock*.
+
+        The lock is refreshed every 15 seconds so that long-running LLM tasks
+        do not lose their claim before they finish.  If the lock can no longer
+        be refreshed (taken over by another worker), refreshing stops but the
+        runner is still allowed to complete.
+        """
+        result: list = [None]
+        exc: list[Optional[BaseException]] = [None]
+
+        def _worker() -> None:
+            try:
+                result[0] = runner(card.task.id, card.task.prompt, card.task.context)
+            except Exception as e:  # noqa: BLE001
+                exc[0] = e
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        keep_refreshing = lock is not None
+        while t.is_alive():
+            t.join(timeout=15.0)
+            if t.is_alive() and keep_refreshing:
+                try:
+                    self.locks.refresh(lock)  # type: ignore[arg-type]
+                except LockError:
+                    keep_refreshing = False  # lock lost; stop refreshing
+
+        if exc[0] is not None:
+            raise exc[0]  # type: ignore[misc]
+        return result[0]  # type: ignore[return-value]
+
     def run(self, runner: Runner, *, workers: list[str]) -> dict[str, KanbanCard]:
         """Drive the board to completion using ``workers`` round-robin."""
         wi = 0
@@ -174,9 +221,13 @@ class SwarmOrchestrator:
             wi += 1
             card = self.claim(worker)
             if card is None:
-                break
+                # All pending tasks are currently locked by other workers; back off
+                # and retry rather than aborting the entire queue.
+                time.sleep(0.05)
+                continue
+            lock = self._active_locks.get(card.task.id)
             try:
-                out = runner(card.task.id, card.task.prompt, card.task.context)
+                out = self._run_task_with_refresh(runner, card, lock)
                 self.complete(card.task.id, out)
             except Exception as e:  # noqa: BLE001
                 self.fail(card.task.id, str(e))

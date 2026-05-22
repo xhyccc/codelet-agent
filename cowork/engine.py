@@ -141,8 +141,13 @@ class CodeletEngine:
     def stream(self, inv: CodeletInvocation, *, on_line=None) -> CodeletResult:
         """Run codelet and emit each stdout line to ``on_line`` as it appears.
 
+        Lines are delivered to ``on_line`` from the calling thread so that a
+        slow or blocking callback cannot leak background IO threads.  Stdout is
+        read one character at a time to avoid buffering long lines.
+
         Returns the same CodeletResult as ``run`` but populated incrementally.
         """
+        import queue
         import time
 
         argv = self.build_argv(inv)
@@ -163,26 +168,67 @@ class CodeletEngine:
         out_lines: list[str] = []
         err_lines: list[str] = []
 
-        def _drain(stream, sink, callback=None):
+        # Lines from stdout are put here so on_line runs in the main thread,
+        # not in the IO drain thread.  None is the sentinel for end-of-stream.
+        _line_q: "queue.Queue[Optional[str]]" = queue.Queue()
+
+        def _drain_stdout(stream, sink):
+            buf = ""
+            while True:
+                ch = stream.read(1)  # read one char to avoid buffering long lines
+                if not ch:
+                    break
+                buf += ch
+                if ch == "\n":
+                    sink.append(buf)
+                    _line_q.put(buf)
+                    buf = ""
+            if buf:  # last line without a trailing newline
+                sink.append(buf)
+                _line_q.put(buf)
+            _line_q.put(None)  # sentinel: stdout stream closed
+
+        def _drain_stderr(stream, sink):
             for line in stream:
                 sink.append(line)
-                if callback is not None:
-                    try:
-                        callback(line)
-                    except Exception:
-                        pass
 
-        t_out = threading.Thread(target=_drain, args=(proc.stdout, out_lines, on_line), daemon=True)
-        t_err = threading.Thread(target=_drain, args=(proc.stderr, err_lines, None), daemon=True)
+        t_out = threading.Thread(target=_drain_stdout, args=(proc.stdout, out_lines), daemon=True)
+        t_err = threading.Thread(target=_drain_stderr, args=(proc.stderr, err_lines), daemon=True)
         t_out.start()
         t_err.start()
-        try:
-            proc.wait(timeout=inv.timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+
+        deadline = (started + inv.timeout) if inv.timeout else None
+        timed_out = False
+        sentinel_seen = False
+
+        while not sentinel_seen:
+            now = time.time()
+            if deadline is not None and now >= deadline:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5.0)  # bounded wait; avoid blocking on zombie children
+                except subprocess.TimeoutExpired:
+                    pass
+                timed_out = True
+                break
+            wait_time = max(0.0, min(0.1, deadline - now)) if deadline is not None else 0.1
+            try:
+                item = _line_q.get(timeout=wait_time)
+            except queue.Empty:
+                continue
+            if item is None:
+                sentinel_seen = True
+            elif on_line is not None:
+                try:
+                    on_line(item)
+                except Exception:
+                    pass
+
+        if not timed_out:
             proc.wait()
-        t_out.join(timeout=1.0)
-        t_err.join(timeout=1.0)
+
+        t_out.join(timeout=2.0)
+        t_err.join(timeout=2.0)
         duration = time.time() - started
 
         stdout = "".join(out_lines)
