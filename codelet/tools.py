@@ -225,6 +225,16 @@ class ToolRegistry:
                 ),
                 "run": self.tool_remember_fact,
             }
+        tools["decompose"] = {
+            "schema": {"goal": "str", "steps": "list[str]=[]"},
+            "risky": False,
+            "description": (
+                "Record a multi-step plan for the current task. "
+                "Provide an explicit list of steps, or omit steps to auto-split "
+                "the goal string by sentence boundaries."
+            ),
+            "run": self.tool_decompose,
+        }
         return tools
 
     # ---- read tools -----------------------------------------------------
@@ -849,6 +859,31 @@ class ToolRegistry:
             existing += "\n"
         memory_path.write_text(existing + f"- {flat}\n", encoding="utf-8")
         return f"remembered: {flat}"
+
+    def tool_decompose(self, args):
+        """Record a multi-step plan in the session for the current task.
+
+        The caller may supply an explicit ``steps`` list.  When ``steps`` is
+        absent or empty the goal string is auto-split on sentence boundaries
+        (``". "`` separator) to produce the step list.
+        """
+        agent = self.agent
+        goal = str(args.get("goal", "")).strip()
+        if not goal:
+            raise ValueError("goal must not be empty")
+        steps = args.get("steps")
+        if isinstance(steps, str):
+            # Accept a newline-delimited string as a fallback.
+            steps = [s.strip() for s in steps.splitlines() if s.strip()]
+        if not steps:
+            # Auto-split on ". " boundaries.
+            parts = _re.split(r"\.\s+", goal.rstrip("."))
+            steps = [p.strip() for p in parts if p.strip()]
+            if not steps:
+                steps = [goal]
+        agent.session["plan"] = {"goal": goal, "steps": list(steps)}
+        numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1))
+        return f"plan recorded\n{numbered}"
 
 
 def tool_argument_validators(agent, name, args):
