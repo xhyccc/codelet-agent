@@ -8,6 +8,7 @@ retry-notice text) now flow in via the YAML-backed config object.
 """
 
 import json
+import re
 import sys
 import uuid
 from datetime import datetime
@@ -28,6 +29,10 @@ from . import sandbox as sandbox_module
 from .stop_reason import AskResult, StopReason
 from .tools import ToolRegistry, tool_argument_validators
 from .utils import clip, now
+
+# Matches "exit_code: 0" followed by a non-digit (or end of string/line),
+# i.e. an actual zero exit code rather than a code starting with "0" like "07".
+_re_exit_zero = re.compile(r"exit_code:\s*0(?!\d)")
 
 
 class MiniAgent:
@@ -345,7 +350,8 @@ class MiniAgent:
                 continue
             content = str(item.get("content", "")).lstrip().lower()
             if content.startswith("error:") or (
-                content.startswith("exit_code:") and not content.startswith("exit_code: 0")
+                content.startswith("exit_code:")
+                and not _re_exit_zero.match(content)
             ):
                 streak += 1
             else:

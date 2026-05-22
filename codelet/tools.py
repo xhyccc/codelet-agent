@@ -255,7 +255,7 @@ class ToolRegistry:
             raise ValueError("invalid line range")
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             lines = list(itertools.islice(f, start - 1, end))
-        body = "\n".join(f"{number:>4}: {line.rstrip(chr(10))}" for number, line in enumerate(lines, start=start))
+        body = "\n".join(f"{number:>4}: {line.rstrip('\r\n')}" for number, line in enumerate(lines, start=start))
         return f"# {path.relative_to(agent.root)}\n{body}"
 
     def tool_search(self, args):
