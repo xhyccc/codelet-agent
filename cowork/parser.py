@@ -8,9 +8,15 @@ coupling to codelet's internals.
 
 The parser is *resilient*: malformed blocks are returned as plain text rather
 than raising, mirroring codelet's own permissive `parse_xml_tool`.
+
+When codelet runs in ``--machine`` mode it XML-escapes the tag bodies (name
+attribute, JSON args, and final text) to prevent special characters from
+breaking the surrounding tags.  The parser transparently unescapes these
+before further processing so callers always receive decoded values.
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 from dataclasses import dataclass
@@ -57,8 +63,11 @@ ParseEvent = Union[TextChunk, ToolCall, FinalAnswer]
 def _parse_tool_body(attrs: str, body: str) -> Optional[ToolCall]:
     # Two schemas: (a) name in attrs + JSON args body; (b) full JSON body with "tool" key.
     attrs_dict = dict(_ATTR_RE.findall(attrs or ""))
-    name = attrs_dict.get("name")
-    body_stripped = body.strip()
+    # Unescape the name in case it was XML-escaped by --machine mode.
+    raw_name = attrs_dict.get("name")
+    name = html.unescape(raw_name) if raw_name is not None else None
+    # Unescape the body: --machine mode XML-escapes it to protect the tags.
+    body_stripped = html.unescape(body).strip()
     args: dict = {}
     if name:
         if body_stripped:
@@ -103,7 +112,7 @@ def parse_codelet_output(raw: str) -> list[ParseEvent]:
         if ev is not None:
             spans.append((m.start(), m.end(), ev))
     for m in _FINAL_RE.finditer(raw):
-        spans.append((m.start(), m.end(), FinalAnswer(text=m.group("body").strip())))
+        spans.append((m.start(), m.end(), FinalAnswer(text=html.unescape(m.group("body")).strip())))
 
     spans.sort(key=lambda s: s[0])
 
@@ -131,4 +140,4 @@ def iter_codelet_output(raw: str) -> Iterator[ParseEvent]:
 def extract_final(raw: str) -> Optional[str]:
     """Return the last <final>...</final> body, or None if absent."""
     matches = _FINAL_RE.findall(raw)
-    return matches[-1].strip() if matches else None
+    return html.unescape(matches[-1]).strip() if matches else None

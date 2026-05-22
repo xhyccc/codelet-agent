@@ -44,10 +44,17 @@ def _make_tool_output_callback():
 
 def _make_machine_tool_callback():
     """Return a callback that prints raw XML tool blocks for machine-readable output."""
+    import html
     import json as _json
 
-    def callback(name, args, result):
-        sys.stdout.write(f'<tool name="{name}">{_json.dumps(args)}</tool>\n')
+    def callback(name, args, result):  # result unused: machine mode only echoes the call, not the output
+        # XML-escape both the name attribute and the JSON body so that
+        # special characters (e.g. <, >, &) in argument values do not
+        # break the cowork XML parser.  The parser unescapes before
+        # JSON-decoding (see cowork/parser.py:_parse_tool_body).
+        safe_name = html.escape(name, quote=True)
+        safe_body = html.escape(_json.dumps(args))
+        sys.stdout.write(f'<tool name="{safe_name}">{safe_body}</tool>\n')
         sys.stdout.flush()
     return callback
 
@@ -295,7 +302,7 @@ def build_arg_parser():
     parser.add_argument("--top-p", type=float, default=argparse.SUPPRESS, help="Top-p nucleus sampling value.")
     parser.add_argument("--no-welcome", action="store_true", default=False, help="Suppress the welcome banner at startup.")
     parser.add_argument("--machine", action="store_true", default=False,
-                        help="Machine-readable raw XML output without UI formatting. Disables spinners and rich markdown; streams raw <tool> and <final> blocks for programmatic consumers.")
+                        help="Enable machine-readable XML output mode. Disables rich UI and streams raw <tool>/<final> blocks for programmatic consumers (e.g. cowork).")
     parser.add_argument("--decoy-tools", action="store_true", default=False,
                         help="Inject decoy tool entries into the prompt (anti-distillation; calls are refused).")
     parser.add_argument("--yolo", action="store_true", default=False,
@@ -369,9 +376,13 @@ def main(argv=None):
             if getattr(args, "machine", False):
                 # RAW MODE: no spinners, no markdown; stream <tool> blocks via
                 # _make_machine_tool_callback and wrap the final answer in <final>.
+                # The response is XML-escaped so that special characters in the
+                # answer do not break the cowork parser (which unescapes it).
                 try:
+                    import html as _html
                     response = agent.ask(prompt)
-                    sys.stdout.write(f"<final>{response}</final>\n")
+                    safe_response = _html.escape(response)
+                    sys.stdout.write(f"<final>{safe_response}</final>\n")
                     sys.stdout.flush()
                 except RuntimeError as exc:
                     sys.stderr.write(str(exc) + "\n")
