@@ -20,6 +20,9 @@ from typing import Optional, Sequence
 
 from . import parser as P
 
+# Interval between queue polls in the stream() main loop (seconds).
+_QUEUE_POLL_INTERVAL = 0.1
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -143,7 +146,8 @@ class CodeletEngine:
 
         Lines are delivered to ``on_line`` from the calling thread so that a
         slow or blocking callback cannot leak background IO threads.  Stdout is
-        read one character at a time to avoid buffering long lines.
+        read via ``readline()`` to bypass ``TextIOWrapper``'s 8 KB read-ahead
+        buffer, ensuring individual lines are delivered promptly.
 
         Returns the same CodeletResult as ``run`` but populated incrementally.
         """
@@ -173,25 +177,19 @@ class CodeletEngine:
         _line_q: "queue.Queue[Optional[str]]" = queue.Queue()
 
         def _drain_stdout(stream, sink):
-            buf = ""
             while True:
-                ch = stream.read(1)  # read one char to avoid buffering long lines
-                if not ch:
+                line = stream.readline()  # readline() reads up to the next newline without
+                # over-reading, making it more responsive than TextIOWrapper.__iter__ which
+                # reads in 8 KB chunks and may delay delivery of partial output.
+                if not line:
                     break
-                buf += ch
-                if ch == "\n":
-                    sink.append(buf)
-                    _line_q.put(buf)
-                    buf = ""
-            if buf:  # last line without a trailing newline
-                sink.append(buf)
-                _line_q.put(buf)
+                sink.append(line)
+                _line_q.put(line)
             _line_q.put(None)  # sentinel: stdout stream closed
 
         def _drain_stderr(stream, sink):
             for line in stream:
                 sink.append(line)
-
         t_out = threading.Thread(target=_drain_stdout, args=(proc.stdout, out_lines), daemon=True)
         t_err = threading.Thread(target=_drain_stderr, args=(proc.stderr, err_lines), daemon=True)
         t_out.start()
@@ -211,7 +209,11 @@ class CodeletEngine:
                     pass
                 timed_out = True
                 break
-            wait_time = max(0.0, min(0.1, deadline - now)) if deadline is not None else 0.1
+            wait_time = (
+                max(0.0, min(_QUEUE_POLL_INTERVAL, deadline - now))
+                if deadline is not None
+                else _QUEUE_POLL_INTERVAL
+            )
             try:
                 item = _line_q.get(timeout=wait_time)
             except queue.Empty:

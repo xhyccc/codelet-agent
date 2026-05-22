@@ -28,6 +28,11 @@ from .collab import FileLock, FileLockManager, LockError
 # A runner takes (task_id, prompt, context) and returns a string result.
 Runner = Callable[[str, str, dict[str, Any]], str]
 
+# How long to wait before retrying after lock contention in SwarmOrchestrator.run.
+_LOCK_CONTENTION_BACKOFF = 0.05
+# How often (seconds) to refresh the task lock during a long-running runner call.
+_LOCK_REFRESH_INTERVAL = 15.0
+
 
 # ---------------------------------------------------------------------------
 # Task primitives
@@ -150,6 +155,7 @@ class SwarmOrchestrator:
         self.locks = lock_manager or FileLockManager(default_ttl=60)
         self.cards: dict[str, KanbanCard] = {}
         self._active_locks: dict[str, FileLock] = {}
+        self._state_lock = threading.RLock()  # guards _active_locks for concurrent claim()
 
     def add(self, task: Task) -> None:
         self.cards[task.id] = KanbanCard(task=task)
@@ -162,7 +168,8 @@ class SwarmOrchestrator:
                 lock = self.locks.acquire(self.workspace_id, f"task:{card.task.id}", worker)
             except LockError:
                 continue
-            self._active_locks[card.task.id] = lock
+            with self._state_lock:
+                self._active_locks[card.task.id] = lock
             card.status = "claimed"
             card.worker = worker
             return card
@@ -199,12 +206,13 @@ class SwarmOrchestrator:
         t.start()
         keep_refreshing = lock is not None
         while t.is_alive():
-            t.join(timeout=15.0)
-            if t.is_alive() and keep_refreshing:
+            t.join(timeout=_LOCK_REFRESH_INTERVAL)
+            if t.is_alive() and lock is not None and keep_refreshing:
                 try:
-                    self.locks.refresh(lock)  # type: ignore[arg-type]
+                    self.locks.refresh(lock)
                 except LockError:
                     keep_refreshing = False  # lock lost; stop refreshing
+        t.join()  # ensure thread is fully done before inspecting result/exc
 
         if exc[0] is not None:
             raise exc[0]  # type: ignore[misc]
@@ -223,9 +231,10 @@ class SwarmOrchestrator:
             if card is None:
                 # All pending tasks are currently locked by other workers; back off
                 # and retry rather than aborting the entire queue.
-                time.sleep(0.05)
+                time.sleep(_LOCK_CONTENTION_BACKOFF)
                 continue
-            lock = self._active_locks.get(card.task.id)
+            with self._state_lock:
+                lock = self._active_locks.get(card.task.id)
             try:
                 out = self._run_task_with_refresh(runner, card, lock)
                 self.complete(card.task.id, out)
