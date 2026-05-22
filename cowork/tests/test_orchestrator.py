@@ -98,7 +98,10 @@ def test_sequential_stops_on_failure():
     tasks = [Task(id="a", prompt="x"), Task(id="b", prompt="y", depends_on=["a"])]
     res = SequentialOrchestrator(runner).run(tasks)
     assert res["a"].error == "nope"
-    assert "b" not in res
+    # "b" depends on the failed "a"; it should be present but marked blocked.
+    assert "b" in res
+    assert res["b"].error is not None
+    assert "blocked" in res["b"].error
 
 
 def test_sequential_rejects_duplicate_ids():

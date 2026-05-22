@@ -168,7 +168,7 @@ class FileLockManager:
         self._counter = 0
 
     def _now(self) -> float:
-        return time.time()
+        return time.monotonic()
 
     def _new_token(self) -> str:
         self._counter += 1
@@ -227,11 +227,7 @@ class FileLockManager:
             cur = self._locks.get((workspace_id, path))
             if cur is None:
                 return False
-            if cur.expires_at <= self._now():
-                # expired -> evict
-                del self._locks[(workspace_id, path)]
-                return False
-            return True
+            return cur.expires_at > self._now()
 
     def list_for_workspace(self, workspace_id: str) -> list[FileLock]:
         with self._lock:

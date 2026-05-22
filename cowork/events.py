@@ -138,21 +138,23 @@ class QueueSubscription:
     def __init__(self, bus: EventBus, channel: str, maxsize: int = 1024):
         import queue
         self.queue: "queue.Queue[Event]" = queue.Queue(maxsize=maxsize)
+        self._evict_lock = threading.Lock()
         self._sub = bus.subscribe(channel, self._on)
 
     def _on(self, event: Event) -> None:
         try:
             self.queue.put_nowait(event)
         except Exception:
-            # queue full: drop oldest then push
-            try:
-                self.queue.get_nowait()
-            except Exception:
-                pass
-            try:
-                self.queue.put_nowait(event)
-            except Exception:
-                pass
+            # queue full: atomically drop oldest then push
+            with self._evict_lock:
+                try:
+                    self.queue.get_nowait()
+                except Exception:
+                    pass
+                try:
+                    self.queue.put_nowait(event)
+                except Exception:
+                    pass
 
     def get(self, timeout: Optional[float] = None) -> Event:
         return self.queue.get(timeout=timeout)
