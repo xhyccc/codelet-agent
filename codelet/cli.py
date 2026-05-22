@@ -31,7 +31,7 @@ _SLASH_COMMANDS = ["/exit", "/quit", "/help", "/memory", "/session", "/reset"]
 
 def _make_tool_output_callback():
     """Return a callback that prints tool output in a styled panel after each tool call."""
-    def callback(name, result):
+    def callback(name, args, result):
         panel = Panel(
             str(result).strip(),
             title=f"🔧 Tool Execution: {name}",
@@ -42,10 +42,21 @@ def _make_tool_output_callback():
     return callback
 
 
+def _make_machine_tool_callback():
+    """Return a callback that prints raw XML tool blocks for machine-readable output."""
+    import json as _json
+
+    def callback(name, args, result):
+        sys.stdout.write(f'<tool name="{name}">{_json.dumps(args)}</tool>\n')
+        sys.stdout.flush()
+    return callback
+
+
 def build_agent(args):
     """Construct a MiniAgent from parsed CLI arguments."""
+    machine_mode = getattr(args, "machine", False)
     workspace = WorkspaceContext.build(args.cwd)
-    store = SessionStore(Path(workspace.repo_root) / ".mini-coding-agent" / "sessions")
+    store = SessionStore(Path(workspace.repo_root) / ".codelet" / "sessions")
 
     # Discover and apply .env. Env-vars set by .env feed both the resolution
     # of provider keys later in this function (via os.environ) and the
@@ -127,7 +138,7 @@ def build_agent(args):
         harness_cfg["yolo_classifier"] = True
         config["harness"] = harness_cfg
     if getattr(args, "undercover", False):
-        os.environ["MINI_AGENT_UNDERCOVER"] = "1"
+        os.environ["CODELET_UNDERCOVER"] = "1"
 
     preset = resolve_provider_preset(args.provider) if getattr(args, "provider", None) else None
     if preset is not None:
@@ -171,6 +182,7 @@ def build_agent(args):
     session_id = args.resume
     if session_id == "latest":
         session_id = store.latest()
+    tool_cb = _make_machine_tool_callback() if machine_mode else _make_tool_output_callback()
     if session_id:
         return MiniAgent.from_session(
             model_client=model_client,
@@ -183,7 +195,7 @@ def build_agent(args):
             allowed_ops=allowed_ops,
             sandbox=args.sandbox,
             config=config,
-            tool_output_callback=_make_tool_output_callback(),
+            tool_output_callback=tool_cb,
         )
     return MiniAgent(
         model_client=model_client,
@@ -195,7 +207,7 @@ def build_agent(args):
         allowed_ops=allowed_ops,
         sandbox=args.sandbox,
         config=config,
-        tool_output_callback=_make_tool_output_callback(),
+        tool_output_callback=tool_cb,
     )
 
 
@@ -282,6 +294,8 @@ def build_arg_parser():
     parser.add_argument("--temperature", type=float, default=argparse.SUPPRESS, help="Sampling temperature.")
     parser.add_argument("--top-p", type=float, default=argparse.SUPPRESS, help="Top-p nucleus sampling value.")
     parser.add_argument("--no-welcome", action="store_true", default=False, help="Suppress the welcome banner at startup.")
+    parser.add_argument("--machine", action="store_true", default=False,
+                        help="Machine-readable raw XML output without UI formatting. Disables spinners and rich markdown; streams raw <tool> and <final> blocks for programmatic consumers.")
     parser.add_argument("--decoy-tools", action="store_true", default=False,
                         help="Inject decoy tool entries into the prompt (anti-distillation; calls are refused).")
     parser.add_argument("--yolo", action="store_true", default=False,
@@ -335,26 +349,42 @@ def main(argv=None):
         args.approval = "auto" if args.prompt else "ask"
     args = _post_process_args(args)
 
+    # Machine mode: force line-buffered stdout so cowork's readline() loop
+    # receives output immediately rather than waiting for a full buffer flush.
+    if getattr(args, "machine", False):
+        sys.stdout.reconfigure(line_buffering=True)
+
     agent = build_agent(args)
 
     backend_label = args.backend
     if getattr(args, "provider", None):
         backend_label = f"{args.backend} ({args.provider})"
-    if not args.no_welcome and not getattr(args, "undercover", False):
+    if not args.no_welcome and not getattr(args, "undercover", False) and not getattr(args, "machine", False):
         welcome_text = build_welcome(agent, model=args.model, backend=backend_label)
         console.print(Panel(welcome_text, title="🚀 Codelet Agent", border_style="blue"))
 
     if args.prompt:
         prompt = " ".join(args.prompt).strip()
         if prompt:
-            console.print()
-            try:
-                with console.status("[bold green]Thinking...", spinner="dots"):
+            if getattr(args, "machine", False):
+                # RAW MODE: no spinners, no markdown; stream <tool> blocks via
+                # _make_machine_tool_callback and wrap the final answer in <final>.
+                try:
                     response = agent.ask(prompt)
-                console.print(Markdown(response))
-            except RuntimeError as exc:
-                console.print(str(exc), style="bold red")
-                return 1
+                    sys.stdout.write(f"<final>{response}</final>\n")
+                    sys.stdout.flush()
+                except RuntimeError as exc:
+                    sys.stderr.write(str(exc) + "\n")
+                    return 1
+            else:
+                console.print()
+                try:
+                    with console.status("[bold green]Thinking...", spinner="dots"):
+                        response = agent.ask(prompt)
+                    console.print(Markdown(response))
+                except RuntimeError as exc:
+                    console.print(str(exc), style="bold red")
+                    return 1
         return 0
 
     # Set up prompt_toolkit session with slash-command autocomplete.

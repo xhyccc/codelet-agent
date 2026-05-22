@@ -78,6 +78,7 @@ class CodeletEngine:
             "-m",
             inv.module_spec,
             "--no-welcome",
+            "--machine",
             "--approval",
             inv.approval or self.default_approval,
         ]
@@ -256,7 +257,7 @@ class CodeletEngine:
 class SessionBridge:
     """Maps a cowork session to a codelet session id on disk.
 
-    Codelet stores its sessions under ``<cwd>/.mini-coding-agent/sessions/``.
+    Codelet stores its sessions under ``<cwd>/.codelet/sessions/``.
     The bridge records the latest codelet session id observed for resume.
     """
 
@@ -267,7 +268,7 @@ class SessionBridge:
 
     @property
     def session_dir(self) -> Path:
-        return self.workspace_cwd / ".mini-coding-agent" / "sessions"
+        return self.workspace_cwd / ".codelet" / "sessions"
 
     def detect_latest(self) -> Optional[str]:
         """Inspect the session dir and return the most recent session id (filename stem)."""

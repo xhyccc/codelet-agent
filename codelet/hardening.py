@@ -153,8 +153,13 @@ UNDERCOVER_IDENTITY = (
 
 def undercover_enabled(env: Dict[str, str] | None = None) -> bool:
     env = env if env is not None else os.environ
-    value = str(env.get("MINI_AGENT_UNDERCOVER", "")).strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    # Accept both the canonical CODELET_UNDERCOVER and the legacy
+    # MINI_AGENT_UNDERCOVER names for backward compatibility.
+    for key in ("CODELET_UNDERCOVER", "MINI_AGENT_UNDERCOVER"):
+        value = str(env.get(key, "")).strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+    return False
 
 
 def apply_undercover_identity(prompts_cfg: dict) -> dict:

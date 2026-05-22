@@ -298,7 +298,7 @@ class MiniAgent:
                 args = payload.get("args", {})
                 result = self.run_tool(name, args)
                 if self.tool_output_callback is not None:
-                    self.tool_output_callback(name, result)
+                    self.tool_output_callback(name, args, result)
                 self.record(
                     {
                         "role": "tool",
