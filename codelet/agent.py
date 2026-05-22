@@ -252,8 +252,7 @@ class MiniAgent:
         reason on ``self.last_stop_reason`` (a :class:`StopReason`).
         """
         memory = self.session["memory"]
-        if not memory["task"]:
-            memory["task"] = clip(user_message.strip(), 300)
+        memory["task"] = clip(user_message.strip(), 300)
         self.record({"role": "user", "content": user_message, "created_at": now()})
 
         retry_template = self.config.get("prompts", {}).get(
@@ -308,10 +307,10 @@ class MiniAgent:
                 # Frustration / repeated-error detector: if the same tool has
                 # failed N times in a row, give up the loop instead of letting
                 # the model spin against an unfixable error.
-                if self._tool_error_streak(name) >= repeated_error_threshold:
+                if self._tool_error_streak() >= repeated_error_threshold:
                     final = (
                         f"Gave up after {repeated_error_threshold} consecutive "
-                        f"errors from `{name}`. Last error: "
+                        f"tool errors. Last error from `{name}`: "
                         f"{clip(str(result), 200)}. "
                         "Please clarify the task or the path/arguments."
                     )
@@ -332,18 +331,22 @@ class MiniAgent:
         final = "Stopped after reaching the step limit without a final answer."
         return _finish(final, StopReason.STEP_LIMIT)
 
-    def _tool_error_streak(self, name):
-        """Count how many consecutive tool calls for ``name`` ended in an
-        error result (string starting with ``error:``).
+    def _tool_error_streak(self):
+        """Count how many consecutive tool calls ended in an error result.
+
+        A result is considered an error if it starts with ``error:`` or
+        contains a non-zero subprocess exit code (``exit_code: <non-zero>``).
+        Interleaved failures across different tools are counted together so
+        the agent cannot bypass the threshold by alternating failing tools.
         """
         streak = 0
         for item in reversed(self.session["history"]):
             if item.get("role") != "tool":
                 continue
-            if item.get("name") != name:
-                break
-            content = str(item.get("content", ""))
-            if content.lstrip().lower().startswith("error:"):
+            content = str(item.get("content", "")).lstrip().lower()
+            if content.startswith("error:") or (
+                content.startswith("exit_code:") and not content.startswith("exit_code: 0")
+            ):
                 streak += 1
             else:
                 break
@@ -455,7 +458,7 @@ class MiniAgent:
                     rel = candidate.relative_to(repo_root)
                     self.remember(notes, f"loaded subdir memory {rel}: {snippet[:200]}",
                                   self.config.get("harness", {}).get("notes_limit", 16))
-                    break
+                    return
                 cur = cur.parent
 
     def repeated_tool_call(self, name, args):

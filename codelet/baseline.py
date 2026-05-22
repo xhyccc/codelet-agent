@@ -41,11 +41,15 @@ def _git(args, cwd):
 def _file_signature(path):
     """Return a deterministic signature for a file (size + sha256 prefix)."""
     try:
-        data = Path(path).read_bytes()
+        path_obj = Path(path)
+        size = path_obj.stat().st_size
+        hasher = hashlib.sha256()
+        with open(path_obj, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                hasher.update(chunk)
+        return {"size": size, "sha256_16": hasher.hexdigest()[:16]}
     except OSError:
         return None
-    digest = hashlib.sha256(data).hexdigest()[:16]
-    return {"size": len(data), "sha256_16": digest}
 
 
 def capture_baseline(repo_root, *, watch_files=None):

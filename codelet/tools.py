@@ -7,13 +7,13 @@ so it can access the workspace and sandbox configuration.
 """
 
 import html as _html_module
+import itertools
 import os
 import platform
 import re as _re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -253,8 +253,9 @@ class ToolRegistry:
         end = int(args.get("end", 200))
         if start < 1 or end < start:
             raise ValueError("invalid line range")
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        body = "\n".join(f"{number:>4}: {line}" for number, line in enumerate(lines[start - 1:end], start=start))
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = list(itertools.islice(f, start - 1, end))
+        body = "\n".join(f"{number:>4}: {line.rstrip(chr(10))}" for number, line in enumerate(lines, start=start))
         return f"# {path.relative_to(agent.root)}\n{body}"
 
     def tool_search(self, args):
@@ -279,11 +280,15 @@ class ToolRegistry:
             if item.is_file() and not any(part in IGNORED_PATH_NAMES for part in item.relative_to(agent.root).parts)
         ]
         for file_path in files:
-            for number, line in enumerate(file_path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
-                if pattern.lower() in line.lower():
-                    matches.append(f"{file_path.relative_to(agent.root)}:{number}:{line}")
-                    if len(matches) >= 200:
-                        return "\n".join(matches)
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    for number, line in enumerate(f, start=1):
+                        if pattern.lower() in line.lower():
+                            matches.append(f"{file_path.relative_to(agent.root)}:{number}:{line.strip()}")
+                            if len(matches) >= 200:
+                                return "\n".join(matches)
+            except OSError:
+                pass
         return "\n".join(matches) or "(no matches)"
 
     def tool_glob(self, args):
@@ -337,33 +342,49 @@ class ToolRegistry:
             # are POSIX-only and have already been gated out by
             # sandbox_preexec() returning None on Windows.
             argv = _windows_shell_command(command)
-            result = subprocess.run(
-                argv,
-                cwd=agent.root,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                **{k: v for k, v in sandbox_kwargs.items() if k != "preexec_fn"},
-            )
+            try:
+                result = subprocess.run(
+                    argv,
+                    cwd=agent.root,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    **{k: v for k, v in sandbox_kwargs.items() if k != "preexec_fn"},
+                )
+                stdout_text = result.stdout
+                stderr_text = result.stderr
+                exit_code = result.returncode
+            except subprocess.TimeoutExpired as exc:
+                stdout_text = exc.stdout or ""
+                stderr_text = exc.stderr or ""
+                exit_code = f"timeout ({timeout}s)"
         else:
-            result = subprocess.run(
-                command,
-                cwd=agent.root,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                **sandbox_kwargs,
-            )
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=agent.root,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    **sandbox_kwargs,
+                )
+                stdout_text = result.stdout
+                stderr_text = result.stderr
+                exit_code = result.returncode
+            except subprocess.TimeoutExpired as exc:
+                stdout_text = exc.stdout or ""
+                stderr_text = exc.stderr or ""
+                exit_code = f"timeout ({timeout}s)"
         tool_out_cfg = (harness.get("tool_output") or {})
         out_limit = int(tool_out_cfg.get("max_chars", harness.get("max_tool_output", 4000)))
         return "\n".join(
             [
-                f"exit_code: {result.returncode}",
+                f"exit_code: {exit_code}",
                 "stdout:",
-                _scrub_subprocess_text(result.stdout, limit=out_limit).strip() or "(empty)",
+                _scrub_subprocess_text(stdout_text, limit=out_limit).strip() or "(empty)",
                 "stderr:",
-                _scrub_subprocess_text(result.stderr, limit=out_limit).strip() or "(empty)",
+                _scrub_subprocess_text(stderr_text, limit=out_limit).strip() or "(empty)",
             ]
         )
 
@@ -388,29 +409,31 @@ class ToolRegistry:
             if preexec is not None:
                 sandbox_kwargs["preexec_fn"] = preexec
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as fh:
-            fh.write(code)
-            tmp_path = fh.name
         try:
             result = subprocess.run(
-                [sys.executable, tmp_path],
+                [sys.executable, "-c", code],
                 cwd=agent.root,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 **sandbox_kwargs,
             )
-        finally:
-            os.unlink(tmp_path)
+            stdout_text = result.stdout
+            stderr_text = result.stderr
+            exit_code = result.returncode
+        except subprocess.TimeoutExpired as exc:
+            stdout_text = exc.stdout or ""
+            stderr_text = exc.stderr or ""
+            exit_code = f"timeout ({timeout}s)"
         tool_out_cfg = (harness.get("tool_output") or {})
         out_limit = int(tool_out_cfg.get("max_chars", harness.get("max_tool_output", 4000)))
         return "\n".join(
             [
-                f"exit_code: {result.returncode}",
+                f"exit_code: {exit_code}",
                 "stdout:",
-                _scrub_subprocess_text(result.stdout, limit=out_limit).strip() or "(empty)",
+                _scrub_subprocess_text(stdout_text, limit=out_limit).strip() or "(empty)",
                 "stderr:",
-                _scrub_subprocess_text(result.stderr, limit=out_limit).strip() or "(empty)",
+                _scrub_subprocess_text(stderr_text, limit=out_limit).strip() or "(empty)",
             ]
         )
 
@@ -435,11 +458,13 @@ class ToolRegistry:
         if "new_text" not in args:
             raise ValueError("missing new_text")
         text = path.read_text(encoding="utf-8")
-        count = text.count(old_text)
+        norm_text = text.replace("\r\n", "\n")
+        norm_old = old_text.replace("\r\n", "\n")
+        count = norm_text.count(norm_old)
         if count != 1:
             raise ValueError(f"old_text must occur exactly once, found {count}")
-        new_text = str(args["new_text"])
-        updated = text.replace(old_text, new_text, 1)
+        new_text = str(args["new_text"]).replace("\r\n", "\n")
+        updated = norm_text.replace(norm_old, new_text, 1)
         path.write_text(updated, encoding="utf-8")
         rel = path.relative_to(agent.root)
         diff = _render_diff(text, updated, str(rel))
@@ -455,6 +480,8 @@ class ToolRegistry:
     def tool_delete_file(self, args):
         agent = self.agent
         path = agent.path(args["path"])
+        if path.resolve() == agent.root.resolve():
+            raise ValueError("error: Refusing to delete the workspace root.")
         if not path.exists():
             raise ValueError("path does not exist")
         if path.is_dir() and any(path.iterdir()):
@@ -772,7 +799,7 @@ class ToolRegistry:
             try:
                 with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                     content_type = resp.headers.get("Content-Type", "")
-                    raw = resp.read(max_chars * 6)
+                    raw = resp.read(1024 * 1024)
             except urllib.error.HTTPError as e:
                 return (
                     f"error: {url} returned HTTP {e.code} {e.reason}. "
@@ -889,12 +916,12 @@ def tool_argument_validators(agent, name, args):
         path = agent.path(args["path"])
         if not path.is_file():
             raise ValueError("path is not a file")
-        old_text = str(args.get("old_text", ""))
+        old_text = str(args.get("old_text", "")).replace("\r\n", "\n")
         if not old_text:
             raise ValueError("old_text must not be empty")
         if "new_text" not in args:
             raise ValueError("missing new_text")
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
         count = text.count(old_text)
         if count != 1:
             raise ValueError(f"old_text must occur exactly once, found {count}")
