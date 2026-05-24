@@ -16,7 +16,7 @@ from codelet.tools import _is_windows, _render_diff, _windows_shell_command
 
 def _agent(tmp_path):
     ws = WorkspaceContext.build(str(tmp_path))
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     client = FakeModelClient(["<final>noop</final>"])
     return MiniAgent(
         model_client=client, workspace=ws, session_store=store,
@@ -51,7 +51,7 @@ def test_delete_file_moves_to_trash(tmp_path):
     result = agent.run_tool("delete_file", {"path": "victim.txt"})
     assert "trashed" in result
     assert not victim.exists()
-    trash_root = tmp_path / ".mini-coding-agent" / "trash"
+    trash_root = tmp_path / ".codelet" / "trash"
     entries = list(trash_root.rglob("*victim.txt"))
     assert len(entries) == 1
     assert entries[0].read_text() == "bye"

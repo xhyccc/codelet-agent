@@ -3,7 +3,7 @@
 # This file is the single source of truth for all prompts and harness
 # settings. You can override any subset of it by passing
 # ``--config path/to/your.yaml`` on the CLI, or by dropping a
-# ``.mini-coding-agent/config.yaml`` file at the root of your workspace
+# ``.codelet/config.yaml`` file at the root of your workspace
 # (auto-discovered).
 #
 # Prompts follow a six-layer architecture inspired by Claude Code's harness.
@@ -66,7 +66,7 @@ prompts:
     - Use `run_shell` to run tests, build commands, or inspect CLI output; it returns combined stdout and stderr.
     - Use `write_file` or `run_python` to create a new file or fully replace an existing one; prefer `write_file` for plain text content and `run_python` when the file content must be generated programmatically.
     - Use `patch_file` to make a targeted in-place edit to an existing file; `old_text` must match exactly once; it returns a unified diff.
-    - Use `delete_file` to remove a file that is no longer needed; it is reversible — the file moves to .mini-coding-agent/trash/.
+    - Use `delete_file` to remove a file that is no longer needed; it is reversible — the file moves to .codelet/trash/.
     - Use `move_file` to rename or relocate a file within the workspace.
     - Use `run_python` to compute, validate logic, run experiments, or generate files programmatically; it returns stdout and stderr.
     - Use `delegate` when a sub-task benefits from a fresh bounded agent with a clean context window; it returns the child agent's final answer. Child agents inherit the parent's permissions and can write files, run shell commands, and execute Python. For web research tasks that require multiple search and fetch steps, pass `max_steps` of at least 8.
@@ -90,7 +90,7 @@ prompts:
     web_fetch: '<tool>{"name":"web_fetch","args":{"url":"https://example.com"}}</tool>'
 
   # Layer 3: project rules. The string here is appended *after* any rules
-  # auto-discovered from AGENTS.md / .mini-coding-agent/rules.md in the workspace.
+  # auto-discovered from AGENTS.md / .codelet/rules.md in the workspace.
   project_rules: ""
 
   # Layer 4: coordinator. Only emitted when the active agent can delegate.
@@ -176,7 +176,7 @@ harness:
 # Workspace files that should be auto-loaded into the <project-rules> layer.
 project_rules_files:
   - AGENTS.md
-  - .mini-coding-agent/rules.md
+  - .codelet/rules.md
 
 # Hierarchical filesystem-backed memory. The agent scans well-known
 # CLAUDE.md / AGENTS.md / .claude/rules/*.md / CLAUDE.local.md locations
@@ -194,7 +194,7 @@ memory_files:
   # that is incompatible with codelet's load_skill() mechanism.
   #user_roots:
   #  - "~/.claude/CLAUDE.md"
-  #  - "~/.mini-coding-agent/CLAUDE.md"
+  #  - "~/.codelet/CLAUDE.md"
     
 # Sandbox policy. See codelet.sandbox for the field semantics.
 # Override these to relax or tighten what risky tools may do. Keys are

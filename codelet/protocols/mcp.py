@@ -8,7 +8,7 @@ Uses the official ``mcp`` PyPI package for protocol handling.
 
 Wire format: line-delimited JSON-RPC 2.0 over stdio (stdin/stdout).
 
-Config: by default we look for ``.mini-coding-agent/mcp.json`` in the
+Config: by default we look for ``.codelet/mcp.json`` in the
 workspace root.  Schema::
 
     {
@@ -215,9 +215,9 @@ def load_mcp_config(path: Path) -> dict:
 def discover_mcp_servers(workspace_root: Path) -> dict:
     """Locate an ``mcp.json`` file in the workspace (or user-home fallback)."""
     candidates = [
-        workspace_root / ".mini-coding-agent" / "mcp.json",
+        workspace_root / ".codelet" / "mcp.json",
         workspace_root / "mcp.json",
-        Path.home() / ".mini-coding-agent" / "mcp.json",
+        Path.home() / ".codelet" / "mcp.json",
     ]
     for candidate in candidates:
         if candidate.is_file():
@@ -331,7 +331,7 @@ def serve_mcp_stdio(agent, *, stdin=None, stdout=None, blocking: bool = True) ->
                 capabilities=mcp_types.ServerCapabilities(
                     tools=mcp_types.ToolsCapability(),
                 ),
-                serverInfo=mcp_types.Implementation(name="mini-coding-agent", version="0.x"),
+                serverInfo=mcp_types.Implementation(name="codelet", version="0.x"),
             )
             return {
                 "jsonrpc": "2.0", "id": req_id,

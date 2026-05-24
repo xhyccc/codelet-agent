@@ -19,14 +19,14 @@ def make_workspace(tmp_path):
 
 
 # Isolate prompt-layer tests from any memory files the developer has in
-# ~/.claude or ~/.mini-coding-agent so assertions about which XML layers are
+# ~/.claude or ~/.codelet so assertions about which XML layers are
 # present are stable across machines.
 _ISOLATED_MEMORY_CFG = {"memory_files": {"enabled": True, "global_roots": [], "user_roots": []}}
 
 
 def make_agent(tmp_path, **kwargs):
     workspace = make_workspace(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     config = dict(_ISOLATED_MEMORY_CFG)
     if "config" in kwargs:
         from codelet.config import deep_merge

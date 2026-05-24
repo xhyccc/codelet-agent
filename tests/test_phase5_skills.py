@@ -14,7 +14,7 @@ from codelet.skills import (
 
 def _agent(tmp_path, scripted=None):
     ws = WorkspaceContext.build(str(tmp_path))
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     return MiniAgent(
         model_client=FakeModelClient(scripted or ["<final>ok</final>"]),
         workspace=ws,
@@ -24,7 +24,7 @@ def _agent(tmp_path, scripted=None):
 
 
 def _make_skill(repo: Path, name: str, description: str, body: str = "") -> Path:
-    sk_dir = repo / ".mini-coding-agent" / "skills" / name
+    sk_dir = repo / ".codelet" / "skills" / name
     sk_dir.mkdir(parents=True)
     (sk_dir / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: {description}\n---\n{body}\n",
@@ -86,7 +86,7 @@ def test_remember_fact_appends_repo_memory(tmp_path):
     agent = _agent(tmp_path)
     result = agent.run_tool("remember_fact", {"fact": "TestX uses pytest-cov"})
     assert "remembered" in result
-    memory_path = tmp_path / ".mini-coding-agent" / "repo-memory.md"
+    memory_path = tmp_path / ".codelet" / "repo-memory.md"
     assert memory_path.is_file()
     content = memory_path.read_text(encoding="utf-8")
     assert "- TestX uses pytest-cov" in content

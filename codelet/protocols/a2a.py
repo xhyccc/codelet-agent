@@ -39,7 +39,7 @@ class A2AAgentCard:
     skills: List[Dict[str, Any]] = field(default_factory=list)
 
 
-def build_agent_card(agent, *, name: str = "mini-coding-agent",
+def build_agent_card(agent, *, name: str = "codelet",
                      description: str = "Tiny CLI coding agent",
                      version: str = "0.1.0") -> A2AAgentCard:
     """Build an :class:`A2AAgentCard` summarising the agent's tools."""

@@ -142,7 +142,7 @@ class ToolRegistry:
                 "risky": True,
                 "description": (
                     "Move a file or empty directory into the workspace trash "
-                    "(.mini-coding-agent/trash/<session-id>/). Reversible."
+                    "(.codelet/trash/<session-id>/). Reversible."
                 ),
                 "run": self.tool_delete_file,
             }
@@ -220,7 +220,7 @@ class ToolRegistry:
                 "schema": {"fact": "str"},
                 "risky": False,
                 "description": (
-                    "Append a one-line fact to .mini-coding-agent/repo-memory.md "
+                    "Append a one-line fact to .codelet/repo-memory.md "
                     "so future sessions inherit it."
                 ),
                 "run": self.tool_remember_fact,
@@ -483,7 +483,7 @@ class ToolRegistry:
     def _trash_dir(self):
         agent = self.agent
         session_id = (agent.session or {}).get("id", "unknown")
-        trash = agent.root / ".mini-coding-agent" / "trash" / session_id
+        trash = agent.root / ".codelet" / "trash" / session_id
         trash.mkdir(parents=True, exist_ok=True)
         return trash
 
@@ -600,7 +600,7 @@ class ToolRegistry:
                 results.append(fut.result())
         # Persist a snapshot of the parallel-delegation run for auditing.
         try:
-            log_dir = agent.root / ".mini-coding-agent" / "delegated"
+            log_dir = agent.root / ".codelet" / "delegated"
             log_dir.mkdir(parents=True, exist_ok=True)
             log_path = log_dir / f"{uuid.uuid4().hex[:8]}.json"
             log_path.write_text(_json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -851,7 +851,7 @@ class ToolRegistry:
             raise ValueError("fact must not be empty")
         # Sanitise to a single line so the file remains a flat bullet list.
         flat = " ".join(fact.splitlines())[:500]
-        target_dir = Path(agent.workspace.repo_root) / ".mini-coding-agent"
+        target_dir = Path(agent.workspace.repo_root) / ".codelet"
         target_dir.mkdir(parents=True, exist_ok=True)
         memory_path = target_dir / "repo-memory.md"
         existing = memory_path.read_text(encoding="utf-8") if memory_path.is_file() else ""

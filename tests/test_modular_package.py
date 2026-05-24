@@ -13,7 +13,7 @@ from codelet import (
 def build_agent(tmp_path, **kwargs):
     (tmp_path / "README.md").write_text("demo\n", encoding="utf-8")
     workspace = WorkspaceContext.build(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     kwargs.setdefault("approval_policy", "auto")
     return MiniAgent(
         model_client=FakeModelClient([]),
@@ -152,10 +152,10 @@ def test_config_flag_in_cli_parser(tmp_path):
 
 
 def test_workspace_yaml_config_picked_up_by_cli(tmp_path, monkeypatch):
-    """A .mini-coding-agent/config.yaml in the workspace is auto-discovered."""
+    """A .codelet/config.yaml in the workspace is auto-discovered."""
     pytest.importorskip("yaml")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    nested = tmp_path / ".mini-coding-agent"
+    nested = tmp_path / ".codelet"
     nested.mkdir()
     (nested / "config.yaml").write_text(
         "harness:\n  max_steps: 13\n  max_new_tokens: 222\n",
@@ -180,7 +180,7 @@ def test_workspace_yaml_config_picked_up_by_cli(tmp_path, monkeypatch):
 def test_user_config_flag_overrides_workspace_yaml(tmp_path, monkeypatch):
     pytest.importorskip("yaml")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    nested = tmp_path / ".mini-coding-agent"
+    nested = tmp_path / ".codelet"
     nested.mkdir()
     (nested / "config.yaml").write_text(
         "harness:\n  max_steps: 13\n", encoding="utf-8"

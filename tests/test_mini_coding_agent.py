@@ -21,7 +21,7 @@ def build_workspace(tmp_path):
 
 def build_agent(tmp_path, outputs, **kwargs):
     workspace = build_workspace(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     approval_policy = kwargs.pop("approval_policy", "auto")
     return MiniAgent(
         model_client=FakeModelClient(outputs),
@@ -182,13 +182,13 @@ def test_invalid_risky_tool_does_not_prompt_for_approval(tmp_path):
 
 def test_list_files_hides_internal_agent_state(tmp_path):
     agent = build_agent(tmp_path, [])
-    (tmp_path / ".mini-coding-agent").mkdir(exist_ok=True)
+    (tmp_path / ".codelet").mkdir(exist_ok=True)
     (tmp_path / ".git").mkdir(exist_ok=True)
     (tmp_path / "hello.txt").write_text("hi\n", encoding="utf-8")
 
     result = agent.run_tool("list_files", {})
 
-    assert ".mini-coding-agent" not in result
+    assert ".codelet" not in result
     assert ".git" not in result
     assert "[F] hello.txt" in result
 
@@ -268,7 +268,7 @@ def test_prompt_top_level_sections_stay_flush_left_with_multiline_content(tmp_pa
         recent_commits=["abc123 first commit", "def456 second commit"],
         project_docs={"README.md": "line1\nline2"},
     )
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     agent = MiniAgent(
         model_client=FakeModelClient([]),
         workspace=workspace,
@@ -806,7 +806,7 @@ def test_ask_recovers_from_hard_halt_by_force_trimming(tmp_path):
     - A follow-up ask() with the now-small history must succeed normally.
     """
     workspace = build_workspace(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
 
     # First model call is consumed by auto_compaction (returns huge summary).
     # Second model call is for the follow-up ask().
@@ -858,7 +858,7 @@ def test_ask_recovers_from_hard_halt_by_force_trimming(tmp_path):
 def test_ask_hard_halt_does_not_raise_to_caller(tmp_path):
     """ask() must never propagate HardHaltError to its caller."""
     workspace = build_workspace(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
 
     agent = MiniAgent(
         model_client=FakeModelClient(["S" * 300_000]),
@@ -888,7 +888,7 @@ def test_history_text_warns_on_halted_cascade(tmp_path, capsys):
     history_text() must print a warning to stderr and not raise.
     """
     workspace = build_workspace(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
 
     agent = MiniAgent(
         model_client=FakeModelClient(["<final>ok</final>"]),

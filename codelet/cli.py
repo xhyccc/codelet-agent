@@ -308,7 +308,7 @@ def build_arg_parser():
     parser.add_argument("--yolo", action="store_true", default=False,
                         help="Auto-approve obviously-safe shell commands (ls/pwd/cat/git status/...) when approval=ask.")
     parser.add_argument("--undercover", action="store_true", default=False,
-                        help="Use a generic helpful-assistant identity and suppress the welcome banner. Equivalent to MINI_AGENT_UNDERCOVER=1.")
+                        help="Use a generic helpful-assistant identity and suppress the welcome banner. Equivalent to CODELET_UNDERCOVER=1.")
     return parser
 
 

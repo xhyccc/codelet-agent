@@ -7,11 +7,11 @@ pick up to five most-relevant files for inclusion in the prompt.
 
 Layer order (lowest -> highest precedence):
 
-    1. ``/etc/mini-coding-agent/CLAUDE.md``         - system-wide defaults
-    2. ``~/.claude/CLAUDE.md``, ``~/.mini-coding-agent/CLAUDE.md``
+    1. ``/etc/codelet/CLAUDE.md``         - system-wide defaults
+    2. ``~/.claude/CLAUDE.md``, ``~/.codelet/CLAUDE.md``
                                                       - user preferences
     3. ``<repo>/.claude/rules/*.md``,
-       ``<repo>/.mini-coding-agent/rules.md``,
+       ``<repo>/.codelet/rules.md``,
        ``<repo>/AGENTS.md``,
        ``<repo>/CLAUDE.md``                          - project records
     4. ``<repo>/CLAUDE.local.md``                    - git-ignored workspace
@@ -31,14 +31,14 @@ from pathlib import Path
 
 # Default discovery roots. Empty by default — nothing is auto-loaded from
 # global or user home directories unless the config explicitly sets these.
-# (Previous defaults pointed at /etc/mini-coding-agent and ~/.claude which
+# (Previous defaults pointed at /etc/codelet and ~/.claude which
 # caused ~/.claude/AGENTS.md, Claude Code's skill registry, to bleed into
 # codelet's context.)
 DEFAULT_GLOBAL_ROOTS = []
 DEFAULT_USER_ROOTS = []
 DEFAULT_PROJECT_PATHS = [
     ".claude/rules",          # directory - all *.md inside
-    ".mini-coding-agent/rules.md",
+    ".codelet/rules.md",
     "AGENTS.md",
     "CLAUDE.md",
 ]

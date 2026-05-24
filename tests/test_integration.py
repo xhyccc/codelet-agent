@@ -20,7 +20,7 @@ def _workspace(tmp_path):
 
 def _agent(tmp_path, outputs, **kwargs):
     ws = _workspace(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     return MiniAgent(
         model_client=FakeModelClient(outputs),
         workspace=ws,
