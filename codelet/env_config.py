@@ -1,4 +1,4 @@
-"""``.env`` file loader for the mini-coding-agent CLI.
+"""``.env`` file loader for the codelet CLI.
 
 The agent supports loading provider, model, key, and harness defaults from a
 plain-text ``.env`` file at the workspace root (or any explicit path). This

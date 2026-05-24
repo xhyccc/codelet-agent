@@ -172,7 +172,7 @@ def test_engine_stream_callback(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 def test_session_bridge_detect_latest(tmp_path: Path):
-    sd = tmp_path / ".mini-coding-agent" / "sessions"
+    sd = tmp_path / ".codelet" / "sessions"
     sd.mkdir(parents=True)
     (sd / "older.json").write_text("{}")
     import time as _t

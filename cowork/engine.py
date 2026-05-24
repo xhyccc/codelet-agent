@@ -2,7 +2,7 @@
 
 Wraps ``python -m codelet`` as an opaque agent runtime. Cowork never imports
 from `codelet`; we communicate via CLI args, subprocess stdin/stdout, and
-the shared ``.mini-coding-agent/`` session directory.
+the shared ``.codelet/`` session directory.
 
 The plan's `SessionBridge` is realised here as a thin record mapping
 ``cowork_session_id -> codelet_session_id``, plus PID and exit metadata.
