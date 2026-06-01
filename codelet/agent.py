@@ -10,7 +10,9 @@ retry-notice text) now flow in via the YAML-backed config object.
 import json
 import re
 import sys
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -27,7 +29,12 @@ from .prompt import (
 )
 from . import sandbox as sandbox_module
 from .stop_reason import AskResult, StopReason
-from .tools import ToolRegistry, tool_argument_validators
+from .tools import (
+    ToolRegistry,
+    is_concurrency_safe,
+    repair_tool_args,
+    tool_argument_validators,
+)
 from .utils import clip, now
 
 # Matches "exit_code: 0" followed by a non-digit (or end of string/line),
@@ -107,6 +114,13 @@ class MiniAgent:
         from . import skills as skills_module
         self.skills = skills_module.discover_skills(self.workspace.repo_root)
         self._subdir_memory_loaded = set()
+        # Guards shared-state mutations (subdir-memory loading, notes) when
+        # concurrency-safe tools run in parallel during multi-tool batching.
+        self._tool_lock = threading.Lock()
+        # File-read dedup cache: path-range key -> (mtime, size). Lets the
+        # agent return a short stub when the model re-reads an unchanged file
+        # instead of spending context budget on the identical content.
+        self._file_read_cache = {}
         self.tools = self.registry.build()
         # Optional hardening: inject decoy tools so the model surface area
         # advertised in the prompt does not match the *real* runtime
@@ -230,7 +244,31 @@ class MiniAgent:
         )
 
     def prompt(self, user_message):
-        return build_prompt(self.prefix, self.memory_text(), self.history_text(), user_message)
+        plan_text = self._active_plan_text()
+        message = f"{plan_text}\n\n{user_message}" if plan_text else user_message
+        return build_prompt(self.prefix, self.memory_text(), self.history_text(), message)
+
+    def _active_plan_text(self):
+        """Render the active ``decompose`` plan so it is re-consulted each turn.
+
+        The reference agent keeps the explicit plan in view across the whole
+        loop rather than recording it once and forgetting it. After the model
+        calls ``decompose`` the plan lives at ``session["plan"]``; here we
+        surface it on every subsequent prompt so the agent keeps working the
+        next unfinished step instead of losing the thread.
+        """
+        plan = self.session.get("plan")
+        if not isinstance(plan, dict) or not plan.get("steps"):
+            return ""
+        lines = ["<plan>", f"Active plan for: {plan.get('goal', '')}"]
+        for index, step in enumerate(plan["steps"], 1):
+            lines.append(f"{index}. {step}")
+        lines.append(
+            "Re-consult this plan each turn and work the next unfinished step. "
+            "When every step is done, return your <final> answer."
+        )
+        lines.append("</plan>")
+        return "\n".join(lines)
 
     # ---- session bookkeeping -------------------------------------------
 
@@ -265,6 +303,7 @@ class MiniAgent:
         )
         harness = self.config.get("harness", {})
         repeated_error_threshold = int(harness.get("repeated_error_threshold", 3))
+        no_progress_limit = int(harness.get("no_progress_limit", 8))
         tool_steps = 0
         attempts = 0
         max_attempts = max(self.max_steps * 3, self.max_steps + 4)
@@ -293,22 +332,33 @@ class MiniAgent:
             kind, payload = parsing.parse_model_output(raw, retry_template)
 
             if kind == "tool":
-                tool_steps += 1
-                name = payload.get("name", "")
-                args = payload.get("args", {})
-                result = self.run_tool(name, args)
-                if self.tool_output_callback is not None:
-                    self.tool_output_callback(name, args, result)
-                self.record(
-                    {
-                        "role": "tool",
-                        "name": name,
-                        "args": args,
-                        "content": result,
-                        "created_at": now(),
-                    }
-                )
-                self.note_tool(name, args, result)
+                # Multi-tool batching: a single model turn may emit several
+                # independent read-only <tool> calls. Parse them all, cap to
+                # the remaining step budget, and execute — parallelizing
+                # maximal consecutive runs of concurrency-safe tools.
+                calls = parsing.extract_all_tool_payloads(raw)
+                if len(calls) <= 1:
+                    calls = [{"name": payload.get("name", ""), "args": payload.get("args", {})}]
+                remaining = self.max_steps - tool_steps
+                if remaining > 0 and len(calls) > remaining:
+                    calls = calls[:remaining]
+                batch_results = self._execute_tool_batch(calls)
+                name = ""
+                result = ""
+                for name, args, result in batch_results:
+                    tool_steps += 1
+                    if self.tool_output_callback is not None:
+                        self.tool_output_callback(name, args, result)
+                    self.record(
+                        {
+                            "role": "tool",
+                            "name": name,
+                            "args": args,
+                            "content": result,
+                            "created_at": now(),
+                        }
+                    )
+                    self.note_tool(name, args, result)
                 # Frustration / repeated-error detector: if the same tool has
                 # failed N times in a row, give up the loop instead of letting
                 # the model spin against an unfixable error.
@@ -331,6 +381,22 @@ class MiniAgent:
                         "Please clarify the task or the path/arguments."
                     )
                     return _finish(final, StopReason.REPEATED_ERROR_GIVEUP)
+                # Diminishing-returns / no-progress circuit breaker: if the
+                # model keeps issuing read-only calls that surface no new
+                # information (dedup stubs, repeated-call errors, duplicate
+                # results), stop instead of burning the whole step budget.
+                if no_progress_limit and self._no_progress_streak() >= no_progress_limit:
+                    recovered = self._last_successful_action_result(
+                        exclude={"glob", "list_files", "read_file", "search"}
+                    )
+                    if recovered:
+                        return _finish(recovered, StopReason.NO_PROGRESS_GIVEUP)
+                    final = (
+                        f"Stopped after {no_progress_limit} consecutive tool "
+                        "calls that produced no new information. The task may "
+                        "need clarification or a different approach."
+                    )
+                    return _finish(final, StopReason.NO_PROGRESS_GIVEUP)
                 continue
 
             if kind == "retry":
@@ -346,6 +412,58 @@ class MiniAgent:
             return _finish(final, StopReason.ATTEMPT_LIMIT)
         final = "Stopped after reaching the step limit without a final answer."
         return _finish(final, StopReason.STEP_LIMIT)
+
+    def _execute_tool_batch(self, calls):
+        """Execute a list of ``{"name","args"}`` tool calls in order.
+
+        Maximal consecutive runs of concurrency-safe (read-only) tools are
+        dispatched in parallel via a bounded thread pool; every other tool
+        (write/exec/delegate) runs serially. Results are returned as a list
+        of ``(name, args, result)`` tuples in the original call order so the
+        transcript stays deterministic regardless of completion order.
+        """
+        results = [None] * len(calls)
+        max_workers = max(1, int(self.config.get("harness", {}).get("max_parallel_tools", 4)))
+        index = 0
+        while index < len(calls):
+            name = calls[index].get("name", "")
+            args = calls[index].get("args", {}) or {}
+            safe = is_concurrency_safe(name) and self.tools.get(name) is not None
+            if not safe:
+                results[index] = (name, args, self.run_tool(name, args))
+                index += 1
+                continue
+            # Gather the maximal consecutive run of concurrency-safe tools.
+            group = []
+            cursor = index
+            while cursor < len(calls):
+                nm = calls[cursor].get("name", "")
+                if is_concurrency_safe(nm) and self.tools.get(nm) is not None:
+                    group.append(cursor)
+                    cursor += 1
+                else:
+                    break
+            if len(group) == 1:
+                idx = group[0]
+                nm = calls[idx].get("name", "")
+                ar = calls[idx].get("args", {}) or {}
+                results[idx] = (nm, ar, self.run_tool(nm, ar))
+            else:
+                with ThreadPoolExecutor(max_workers=min(max_workers, len(group))) as pool:
+                    futures = {}
+                    for idx in group:
+                        nm = calls[idx].get("name", "")
+                        ar = calls[idx].get("args", {}) or {}
+                        futures[pool.submit(self.run_tool, nm, ar)] = (idx, nm, ar)
+                    for future in as_completed(futures):
+                        idx, nm, ar = futures[future]
+                        try:
+                            res = future.result()
+                        except Exception as exc:  # pragma: no cover - defensive
+                            res = f"error: tool {nm} failed: {exc}"
+                        results[idx] = (nm, ar, res)
+            index = cursor
+        return results
 
     def _tool_error_streak(self):
         """Count how many consecutive tool calls ended in an error result.
@@ -364,6 +482,46 @@ class MiniAgent:
                 content.startswith("exit_code:")
                 and not _re_exit_zero.match(content)
             ):
+                streak += 1
+            else:
+                break
+        return streak
+
+    def _no_progress_streak(self):
+        """Count trailing consecutive tool calls that made no real progress.
+
+        A result is "non-informative" when it is a file-unchanged dedup stub,
+        a repeated-identical-call error, or — for a read-only tool — content
+        identical to an earlier read-only result. This circuit-breaker mirrors
+        the reference agent's diminishing-returns detector: it stops loops
+        where the model keeps inspecting without producing new information,
+        which the plain error-streak counter would miss.
+        """
+        tool_events = [
+            item for item in self.session["history"] if item.get("role") == "tool"
+        ]
+        if not tool_events:
+            return 0
+        contents = [str(item.get("content", "")) for item in tool_events]
+
+        def non_informative(i):
+            content = contents[i]
+            if content.startswith("[file unchanged"):
+                return True
+            if content.lstrip().startswith("error: repeated identical tool call"):
+                return True
+            name = tool_events[i].get("name", "")
+            if is_concurrency_safe(name):
+                for j in range(i):
+                    if contents[j] == content and is_concurrency_safe(
+                        tool_events[j].get("name", "")
+                    ):
+                        return True
+            return False
+
+        streak = 0
+        for i in range(len(tool_events) - 1, -1, -1):
+            if non_informative(i):
                 streak += 1
             else:
                 break
@@ -432,6 +590,9 @@ class MiniAgent:
                     f"instructions, then follow them."
                 )
             return f"error: unknown tool '{name}'"
+        # Best-effort repair of near-miss argument names/types before
+        # validation so a small formatting slip does not waste a turn.
+        args = repair_tool_args(tool.get("schema") or {}, args)
         try:
             self.validate_tool(name, args)
         except Exception as exc:
@@ -454,49 +615,96 @@ class MiniAgent:
         # first ~800 chars into the working memory notes once.
         self._maybe_load_subdir_memory(args)
         try:
-            return clip(tool["run"](args))
+            result = clip(tool["run"](args))
         except Exception as exc:
             return f"error: tool {name} failed: {exc}"
+        return self._dedup_file_read(name, args, result)
+
+    def _dedup_file_read(self, name, args, result):
+        """Return a short stub when ``name`` re-reads an unchanged file.
+
+        Mirrors the reference agent's ``FILE_UNCHANGED_STUB``: the first read
+        of a file returns its full content; a later read of the same path and
+        line range, while the file's mtime and size are unchanged, returns a
+        compact pointer back to the earlier result instead of re-spending the
+        context budget. Any error result is passed through untouched so the
+        model still sees failures.
+        """
+        fileread_tools = (
+            self.config.get("harness", {})
+            .get("compaction", {})
+            .get("fileread_tools", ["read_file"])
+        )
+        if name not in fileread_tools or not isinstance(args, dict):
+            return result
+        if isinstance(result, str) and result.startswith("error:"):
+            return result
+        path = args.get("path")
+        if not isinstance(path, str) or not path:
+            return result
+        try:
+            stat = self.path(path).stat()
+        except Exception:
+            return result
+        rng = (args.get("start"), args.get("end"))
+        key = (str(path), rng)
+        signature = (int(stat.st_mtime_ns), int(stat.st_size))
+        with self._tool_lock:
+            previous = self._file_read_cache.get(key)
+            self._file_read_cache[key] = signature
+        if previous is not None and previous == signature:
+            where = f"`{path}`"
+            if rng != (None, None):
+                where += f" (lines {rng[0]}-{rng[1]})"
+            return (
+                f"[file unchanged since your earlier read of {where}; content "
+                "omitted to save context — reuse the earlier result. If you "
+                "expected a change, the file was not modified.]"
+            )
+        return result
 
     def _maybe_load_subdir_memory(self, args):
         """Pull in the nearest subdir-level AGENT.md (lazy, idempotent)."""
         if not isinstance(args, dict):
             return
-        candidates = []
-        for key in ("path", "src", "dst"):
-            raw = args.get(key)
-            if isinstance(raw, str) and raw:
-                candidates.append(raw)
-        seen = self._subdir_memory_loaded
-        notes = self.session["memory"].setdefault("notes", [])
-        repo_root = Path(self.workspace.repo_root).resolve()
-        for raw in candidates:
-            try:
-                resolved = self.path(raw)
-            except Exception:
-                continue
-            anchor = resolved if resolved.is_dir() else resolved.parent
-            # Walk from the anchor up to (but not including) repo root.
-            cur = anchor
-            while cur != repo_root and repo_root in cur.parents:
-                for fname in ("AGENT.md", "AGENTS.md", "CLAUDE.md"):
-                    candidate = cur / fname
-                    if not candidate.is_file():
-                        continue
-                    key = str(candidate)
-                    if key in seen:
-                        break
-                    seen.add(key)
-                    try:
-                        body = candidate.read_text(encoding="utf-8", errors="replace")
-                    except OSError:
-                        break
-                    snippet = body.strip().splitlines()[0] if body.strip() else ""
-                    rel = candidate.relative_to(repo_root)
-                    self.remember(notes, f"loaded subdir memory {rel}: {snippet[:200]}",
-                                  self.config.get("harness", {}).get("notes_limit", 16))
-                    return
-                cur = cur.parent
+        # Serialise the read-modify-write of the shared ``seen`` set and notes
+        # list so parallel concurrency-safe tools cannot race here.
+        with self._tool_lock:
+            candidates = []
+            for key in ("path", "src", "dst"):
+                raw = args.get(key)
+                if isinstance(raw, str) and raw:
+                    candidates.append(raw)
+            seen = self._subdir_memory_loaded
+            notes = self.session["memory"].setdefault("notes", [])
+            repo_root = Path(self.workspace.repo_root).resolve()
+            for raw in candidates:
+                try:
+                    resolved = self.path(raw)
+                except Exception:
+                    continue
+                anchor = resolved if resolved.is_dir() else resolved.parent
+                # Walk from the anchor up to (but not including) repo root.
+                cur = anchor
+                while cur != repo_root and repo_root in cur.parents:
+                    for fname in ("AGENT.md", "AGENTS.md", "CLAUDE.md"):
+                        candidate = cur / fname
+                        if not candidate.is_file():
+                            continue
+                        key = str(candidate)
+                        if key in seen:
+                            break
+                        seen.add(key)
+                        try:
+                            body = candidate.read_text(encoding="utf-8", errors="replace")
+                        except OSError:
+                            break
+                        snippet = body.strip().splitlines()[0] if body.strip() else ""
+                        rel = candidate.relative_to(repo_root)
+                        self.remember(notes, f"loaded subdir memory {rel}: {snippet[:200]}",
+                                      self.config.get("harness", {}).get("notes_limit", 16))
+                        return
+                    cur = cur.parent
 
     def repeated_tool_call(self, name, args):
         tool_events = [item for item in self.session["history"] if item["role"] == "tool"]

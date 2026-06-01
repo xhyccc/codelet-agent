@@ -41,10 +41,37 @@ class Skill:
     path: Path  # directory containing SKILL.md
     body: str = ""
     assets: List[str] = field(default_factory=list)
+    when_to_use: str = ""
+    argument_hint: str = ""
+    allowed_tools: List[str] = field(default_factory=list)
 
     def manifest(self) -> str:
-        """One-line ``- name: description`` for the prompt prefix."""
-        return f"- {self.name}: {self.description}"
+        """One-line ``- name: description`` for the prompt prefix.
+
+        When the skill declares ``when_to_use`` metadata it is appended as a
+        short ``(use when: ...)`` hint so the model can decide *whether* to
+        load the skill without paying for its full body.
+        """
+        line = f"- {self.name}: {self.description}"
+        if self.when_to_use:
+            line += f" (use when: {self.when_to_use})"
+        return line
+
+
+def _split_list(value) -> List[str]:
+    """Parse a metadata value into a list of strings.
+
+    Accepts a JSON-ish ``[a, b]`` form or a comma/space separated string.
+    """
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value or "").strip().strip("[]")
+    if not text:
+        return []
+    sep = "," if "," in text else None
+    parts = text.split(sep)
+    return [p.strip().strip("\"'") for p in parts if p.strip().strip("\"'")]
+
 
 
 def _parse_front_matter(text: str) -> Dict[str, str]:
@@ -70,13 +97,26 @@ def _parse_skill_file(skill_dir: Path) -> Optional[Skill]:
     body = _FRONT_MATTER_RE.sub("", text, count=1).strip()
     name = fm.get("name") or skill_dir.name
     description = fm.get("description") or (body.splitlines()[0] if body else "")
+    # Optional enrichment metadata (snake_case or camelCase accepted).
+    when_to_use = fm.get("when_to_use") or fm.get("whenToUse") or ""
+    argument_hint = fm.get("argument_hint") or fm.get("argumentHint") or ""
+    allowed_tools = _split_list(fm.get("allowed_tools") or fm.get("allowedTools"))
     # Asset list: every sibling file under the skill dir except SKILL.md.
     assets = sorted(
         str(p.relative_to(skill_dir))
         for p in skill_dir.rglob("*")
         if p.is_file() and p.name != "SKILL.md"
     )
-    return Skill(name=name, description=description, path=skill_dir, body=body, assets=assets)
+    return Skill(
+        name=name,
+        description=description,
+        path=skill_dir,
+        body=body,
+        assets=assets,
+        when_to_use=when_to_use,
+        argument_hint=argument_hint,
+        allowed_tools=allowed_tools,
+    )
 
 
 def discover_skills(repo_root) -> List[Skill]:
@@ -118,6 +158,14 @@ def load_skill_body(skills: List[Skill], name: str) -> str:
     for s in skills:
         if s.name == name:
             parts = [f"# Skill: {s.name}", "", s.body]
+            if s.argument_hint:
+                parts.append("")
+                parts.append(f"Argument hint: {s.argument_hint}")
+            if s.allowed_tools:
+                parts.append("")
+                parts.append(
+                    "Allowed tools for this skill: " + ", ".join(s.allowed_tools)
+                )
             if s.assets:
                 parts.append("")
                 parts.append("Assets in this skill directory:")

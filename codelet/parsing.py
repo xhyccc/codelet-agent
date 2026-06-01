@@ -70,6 +70,46 @@ def parse_xml_tool(raw):
     return {"name": name, "args": args}
 
 
+def extract_all_tool_payloads(raw):
+    """Return a list of ``{"name", "args"}`` payloads for every
+    ``<tool>...</tool>`` block that appears before any ``<final>`` tag.
+
+    Supports both the JSON form (``<tool>{...}</tool>``) and the XML form
+    (``<tool name="..." ...>...</tool>``). Blocks that fail to parse are
+    skipped. Returns ``[]`` when no valid tool blocks are present.
+
+    This powers multi-tool batching: a single model turn may emit several
+    independent read-only tool calls that the agent executes together.
+    """
+    raw = str(raw)
+    final_pos = raw.find("<final>")
+    payloads = []
+    for match in re.finditer(r"<tool(?P<attrs>[^>]*)>(?P<body>.*?)</tool>", raw, re.S):
+        if final_pos != -1 and match.start() > final_pos:
+            break
+        attrs = match.group("attrs") or ""
+        body = match.group("body")
+        payload = None
+        if attrs.strip() == "":
+            # JSON form: <tool>{"name":...,"args":{...}}</tool>
+            try:
+                obj = json.loads(body.strip())
+            except Exception:
+                obj = None
+            if isinstance(obj, dict) and str(obj.get("name", "")).strip():
+                args = obj.get("args", {})
+                if args is None:
+                    args = {}
+                if isinstance(args, dict):
+                    payload = {"name": str(obj["name"]).strip(), "args": args}
+        if payload is None:
+            # XML form: <tool name="..." path="..."><content>...</content></tool>
+            payload = parse_xml_tool(match.group(0))
+        if payload is not None:
+            payloads.append(payload)
+    return payloads
+
+
 def parse_model_output(raw, retry_template):
     """Classify a raw model response.
 

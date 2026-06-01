@@ -8,6 +8,7 @@ so it can access the workspace and sandbox configuration.
 
 import html as _html_module
 import itertools
+import json
 import os
 import platform
 import re as _re
@@ -35,6 +36,29 @@ from .utils import (
     dedupe_lines,
     strip_ansi,
 )
+
+
+# Read-only tools that have no side effects and therefore may be executed
+# concurrently when the model emits several of them in a single turn. This
+# mirrors the reference agent's ``isConcurrencySafe`` flag and tool-call
+# partitioning: maximal consecutive runs of these tools are dispatched in
+# parallel, while write/exec/delegate tools always run serially and in order.
+CONCURRENCY_SAFE_TOOLS = frozenset(
+    {
+        "list_files",
+        "read_file",
+        "search",
+        "glob",
+        "web_search",
+        "web_fetch",
+        "load_skill",
+    }
+)
+
+
+def is_concurrency_safe(name):
+    """Return True if a tool named ``name`` is safe to run in parallel."""
+    return name in CONCURRENCY_SAFE_TOOLS
 
 
 def _scrub_subprocess_text(text, *, limit):
@@ -265,7 +289,11 @@ class ToolRegistry:
             raise ValueError("invalid line range")
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             lines = list(itertools.islice(f, start - 1, end))
-        body = "\n".join(f"{number:>4}: {line.rstrip('\r\n')}" for number, line in enumerate(lines, start=start))
+        body = "\n".join(
+            f"{number:>4}: {text}"
+            for number, line in enumerate(lines, start=start)
+            for text in (line.rstrip("\r\n"),)
+        )
         return f"# {path.relative_to(agent.root)}\n{body}"
 
     def tool_search(self, args):
@@ -884,6 +912,95 @@ class ToolRegistry:
         agent.session["plan"] = {"goal": goal, "steps": list(steps)}
         numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1))
         return f"plan recorded\n{numbered}"
+
+
+# Common alias keys the model frequently emits for a canonical schema field.
+# Used by :func:`repair_tool_args` to coerce near-miss argument names so a
+# small slip ("file" instead of "path") does not waste a whole turn.
+_ARG_ALIASES = {
+    "path": ("file", "filename", "filepath", "file_path", "fpath"),
+    "command": ("cmd", "shell", "bash", "shell_command"),
+    "content": ("text", "body", "data", "file_content"),
+    "pattern": ("regex", "search_pattern"),
+    "code": ("script", "python", "source"),
+    "url": ("uri", "link", "href", "address"),
+    "query": ("q", "search_query", "search", "keywords"),
+    "task": ("prompt", "instruction", "subtask"),
+    "tasks": ("subtasks", "prompts", "instructions"),
+    "old_text": ("old", "find", "search_text", "from_text"),
+    "new_text": ("new", "replace", "replacement", "to_text"),
+    "src": ("source", "from", "src_path"),
+    "dst": ("dest", "destination", "to", "target", "dst_path"),
+    "name": ("skill", "skill_name"),
+    "max_results": ("limit", "count", "num_results", "k"),
+    "max_steps": ("steps", "budget"),
+    "timeout": ("timeout_seconds", "timeout_s", "deadline"),
+}
+
+
+def _schema_type(spec):
+    """Return the bare type name from a schema spec like ``"int=20"``."""
+    return str(spec).split("=", 1)[0].strip()
+
+
+def repair_tool_args(schema, args):
+    """Best-effort coercion of model-supplied ``args`` toward ``schema``.
+
+    Performs two non-destructive repairs and never raises:
+
+    1. **Aliasing** — when a canonical schema key is missing but a well-known
+       alias is present (e.g. ``file`` for ``path``), the alias is renamed.
+    2. **Type coercion** — numeric strings/floats are coerced to ``int`` for
+       ``int`` fields, and a bare string is wrapped/split into a list for
+       ``list[str]`` fields (JSON arrays and comma-separated values supported).
+
+    This mirrors the reference agent's tolerant schema handling so a small
+    formatting slip does not burn a whole turn on an "invalid arguments" error.
+    """
+    if not isinstance(args, dict) or not isinstance(schema, dict):
+        return args
+    repaired = dict(args)
+    for canonical, aliases in _ARG_ALIASES.items():
+        if canonical in schema and canonical not in repaired:
+            for alias in aliases:
+                if alias in repaired:
+                    repaired[canonical] = repaired.pop(alias)
+                    break
+    for key, spec in schema.items():
+        if key not in repaired:
+            continue
+        typ = _schema_type(spec)
+        val = repaired[key]
+        try:
+            if typ == "int" and not isinstance(val, bool):
+                if isinstance(val, str) and val.strip():
+                    repaired[key] = int(float(val.strip()))
+                elif isinstance(val, float):
+                    repaired[key] = int(val)
+            elif typ == "list[str]":
+                if isinstance(val, str):
+                    text = val.strip()
+                    parsed = None
+                    if text.startswith("["):
+                        try:
+                            loaded = json.loads(text)
+                        except Exception:
+                            loaded = None
+                        if isinstance(loaded, list):
+                            parsed = [str(x) for x in loaded]
+                    if parsed is None:
+                        if not text:
+                            parsed = []
+                        elif "," in text:
+                            parsed = [p.strip() for p in text.split(",") if p.strip()]
+                        else:
+                            parsed = [text]
+                    repaired[key] = parsed
+                elif isinstance(val, list):
+                    repaired[key] = [str(x) for x in val]
+        except Exception:
+            pass
+    return repaired
 
 
 def tool_argument_validators(agent, name, args):

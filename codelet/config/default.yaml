@@ -34,7 +34,8 @@ prompts:
   # Layer 1: system_defaults - rules, tool syntax, response format.
   rules:
     - Use tools instead of guessing about the workspace.
-    - Return exactly one <tool>...</tool> or one <final>...</final>.
+    - 'Return either one <tool>...</tool> call, OR several independent read-only <tool> calls in the same response, OR one <final>...</final> answer. Never mix tool calls and a <final> in the same response.'
+    - 'To inspect multiple files or run several independent read-only lookups at once, emit multiple <tool> blocks in a single response — read_file, list_files, search, glob, web_search, and web_fetch run in parallel and all their results come back together. Only batch these read-only tools; issue write_file, patch_file, run_shell, run_python, and delegate one at a time.'
     - 'NEVER write plain prose or planning text without a wrapping tag. Every response must be either a <tool> call or a <final> answer — no exceptions. If you want to plan, put the plan inside <final> or immediately issue the first <tool> call.'
     - 'Tool calls must look like: <tool>{"name":"tool_name","args":{...}}</tool>'
     - 'For write_file and patch_file with multi-line text, prefer XML style: <tool name="write_file" path="file.py"><content>...</content></tool>'
@@ -158,6 +159,13 @@ harness:
   # Default approval policy when running interactively. The CLI overrides this
   # to "auto" when a one-shot prompt is supplied.
   approval: ask
+  # Maximum number of concurrency-safe read-only tools to execute in parallel
+  # when the model batches several <tool> calls in one turn.
+  max_parallel_tools: 4
+  # Circuit breaker: give up after this many consecutive tool calls that
+  # produce no new information (dedup stubs, repeated-call errors, duplicate
+  # read results). 0 disables the check.
+  no_progress_limit: 8
   # Graduated compaction cascade. See codelet.compaction for
   # full semantics. Stages run in order until the rendered transcript drops
   # below ``target_chars``: budget_reduction -> snipping -> microcompaction

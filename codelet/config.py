@@ -29,7 +29,8 @@ BUILTIN_DEFAULTS = {
         ),
         "rules": [
             "Use tools instead of guessing about the workspace.",
-            "Return exactly one <tool>...</tool> or one <final>...</final>.",
+            "Return either one <tool>...</tool> call, OR several independent read-only <tool> calls in the same response, OR one <final>...</final> answer. Never mix tool calls and a <final> in the same response.",
+            "To inspect multiple files or run several independent read-only lookups at once, emit multiple <tool> blocks in a single response \u2014 read_file, list_files, search, glob, web_search, and web_fetch run in parallel and all their results come back together. Only batch these read-only tools; issue write_file, patch_file, run_shell, run_python, and delegate one at a time.",
             "NEVER write plain prose or planning text without a wrapping tag. Every response must be either a <tool> call or a <final> answer \u2014 no exceptions. If you want to plan, put the plan inside <final> or immediately issue the first <tool> call.",
             'Tool calls must look like: <tool>{"name":"tool_name","args":{...}}</tool>',
             'For write_file and patch_file with multi-line text, prefer XML style: <tool name="write_file" path="file.py"><content>...</content></tool>',
@@ -128,6 +129,13 @@ BUILTIN_DEFAULTS = {
         "allowed_ops": None,
         "sandbox": "lite",
         "approval": "ask",
+        # Maximum number of concurrency-safe read-only tools to execute in
+        # parallel when the model batches several <tool> calls in one turn.
+        "max_parallel_tools": 4,
+        # Circuit breaker: give up after this many consecutive tool calls that
+        # produce no new information (dedup stubs, repeated-call errors,
+        # duplicate read results). 0 disables the check.
+        "no_progress_limit": 8,
         # Graduated compaction cascade settings. See
         # :mod:`codelet.compaction` for the full semantics.
         "compaction": {

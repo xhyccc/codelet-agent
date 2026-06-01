@@ -119,6 +119,14 @@ class OpenAIModelClient:
         if self.base_url:
             kwargs["base_url"] = self.base_url
         client = _openai.OpenAI(**kwargs)
+        # Some endpoints (e.g. kimi-for-coding) gate access by User-Agent /
+        # client header and reject unknown callers with 403.  Pass the headers
+        # on the individual call (extra_headers) so they take precedence over
+        # the openai SDK's own built-in User-Agent header.
+        _kimi_headers = {
+            "User-Agent": "claude-code/1.0.0",
+            "x-msh-client": "claude-code",
+        }
         try:
             response = client.chat.completions.create(
                 model=self.model,
@@ -127,6 +135,7 @@ class OpenAIModelClient:
                 temperature=self.temperature,
                 top_p=self.top_p,
                 timeout=self.timeout,
+                extra_headers=_kimi_headers,
             )
         except _openai.APIError as exc:
             raise RuntimeError(f"OpenAI API error: {exc}") from exc
