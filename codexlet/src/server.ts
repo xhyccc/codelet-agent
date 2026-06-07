@@ -86,10 +86,11 @@ function decodeEntities(value: string): string {
 
 function parseFinalFromMachineOutput(stdout: string): string {
   const matches = [...stdout.matchAll(/<final>([\s\S]*?)<\/final>/g)];
-  if (matches.length === 0) {
+  const latest = matches.at(-1);
+  if (!latest) {
     return "No <final> response was returned by codelet.";
   }
-  const body = matches[matches.length - 1][1] ?? "";
+  const body = latest[1] ?? "";
   return decodeEntities(body.trim());
 }
 
@@ -140,7 +141,11 @@ function runCodeletPrompt(session: CodexletSession, prompt: string): Promise<{ f
         const created = after.find((id) => !before.has(id));
         codeletSessionId = created ?? after[after.length - 1];
       }
-      resolve({ final, codeletSessionId });
+      if (codeletSessionId) {
+        resolve({ final, codeletSessionId });
+      } else {
+        resolve({ final });
+      }
     });
 
     child.on("error", (error) => {
@@ -250,7 +255,7 @@ app.post("/api/sessions/:sessionId/chat", async (req, res) => {
 });
 
 app.use(express.static(PUBLIC_DIR));
-app.get("*", (_req, res) => {
+app.get(/.*/, (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "index.html"));
 });
 
