@@ -1,4 +1,5 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
 import path from "node:path";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
@@ -34,6 +35,8 @@ const DATA_FILE = path.join(DATA_DIR, "sessions.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const PORT = Number(process.env.PORT ?? 8787);
 const CODELET_TIMEOUT_MS = Number(process.env.CODEXLET_TIMEOUT_MS ?? 180_000);
+const API_RATE_LIMIT_WINDOW_MS = Number(process.env.CODEXLET_RATE_WINDOW_MS ?? 60_000);
+const API_RATE_LIMIT_MAX = Number(process.env.CODEXLET_RATE_MAX ?? 60);
 
 function ensureStore(): SessionStoreShape {
   if (!fs.existsSync(DATA_DIR)) {
@@ -58,6 +61,8 @@ function ensureStore(): SessionStoreShape {
 }
 
 let store = ensureStore();
+const apiRateLimiter = createRateLimiter(API_RATE_LIMIT_MAX, API_RATE_LIMIT_WINDOW_MS);
+app.use("/api", apiRateLimiter);
 
 function saveStore(): void {
   fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2), "utf-8");
@@ -76,12 +81,32 @@ function listCodeletSessionFiles(workspacePath: string): string[] {
 }
 
 function decodeEntities(value: string): string {
-  return value
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&amp;", "&")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#x27;", "'");
+  return value.replace(/&(lt|gt|amp|quot|#x27);/g, (entity) => {
+    switch (entity) {
+      case "&lt;":
+        return "<";
+      case "&gt;":
+        return ">";
+      case "&amp;":
+        return "&";
+      case "&quot;":
+        return "\"";
+      case "&#x27;":
+        return "'";
+      default:
+        return entity;
+    }
+  });
+}
+
+function createRateLimiter(maxRequests: number, windowMs: number) {
+  return rateLimit({
+    windowMs,
+    limit: maxRequests,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests. Please retry shortly." },
+  });
 }
 
 function parseFinalFromMachineOutput(stdout: string): string {
