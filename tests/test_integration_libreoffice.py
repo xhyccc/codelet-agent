@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from cowork.office.libreoffice import LibreOfficeConnector
+from codelet.libreoffice import LibreOfficeConnector
 
 # Import shared markers
 from conftest import requires_api_key, requires_libreoffice

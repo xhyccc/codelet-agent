@@ -1,9 +1,5 @@
-"""LibreOffice headless conversion connector.
+"""LibreOffice headless conversion connector."""
 
-Wraps ``soffice --headless --convert-to`` for docx/xlsx/pptx -> pdf/html
-conversions. If ``soffice`` is not on PATH, ``available`` is False and
-``invoke`` returns a structured error rather than raising.
-"""
 from __future__ import annotations
 
 import shutil
@@ -45,9 +41,19 @@ class LibreOfficeConnector:
         odir.mkdir(parents=True, exist_ok=True)
         try:
             proc = subprocess.run(
-                [self.binary, "--headless", "--convert-to", output_format,
-                 "--outdir", str(odir), str(ipath)],
-                capture_output=True, text=True, timeout=timeout, check=False,
+                [
+                    self.binary,
+                    "--headless",
+                    "--convert-to",
+                    output_format,
+                    "--outdir",
+                    str(odir),
+                    str(ipath),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
             )
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": "conversion timed out"}

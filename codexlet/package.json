@@ -1,0 +1,23 @@
+{
+  "name": "codexlet",
+  "version": "1.0.0",
+  "description": "TypeScript GUI wrapper around codelet CLI machine mode",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc && cp -r src/public/* dist/public/",
+    "start": "node dist/server.js",
+    "dev": "npm run build && npm run start"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.2",
+    "typescript": "^6.0.3"
+  }
+}

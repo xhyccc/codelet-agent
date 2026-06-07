@@ -24,6 +24,25 @@ It is a minimal local agent loop with:
 
 The agent supports two model backends: **Ollama** (default, local) and any **OpenAI-compatible API**. The OpenAI backend ships with convenience presets for popular custom LLM providers (**Kimi/Moonshot**, **GLM/Zhipu**, **SiliconFlow**, **DeepSeek**, **OpenRouter**, **Together**, **DashScope**, ...) so you can pick one with a single `--provider` flag.
 
+## codexlet GUI
+
+This repository also ships a TypeScript GUI in `codexlet/` that wraps `codelet --machine` and adds:
+
+- session list + per-session chat history
+- workspace-folder selection when creating each session
+- persisted mapping from GUI sessions to codelet session IDs for resume
+
+Quick start:
+
+```bash
+cd codexlet
+npm install
+npm run build
+npm start
+```
+
+Open http://127.0.0.1:8787.
+
 <a href="https://magazine.sebastianraschka.com/p/components-of-a-coding-agent">
   <img src="https://substack-post-media.s3.amazonaws.com/public/images/49b97718-57f4-4977-99c8-8ad5c4d32af3_1548x862.png" width="500px">
 </a>
