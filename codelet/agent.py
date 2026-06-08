@@ -79,7 +79,7 @@ class MiniAgent:
 
         self.model_client = model_client
         self.workspace = workspace
-        self.root = Path(workspace.repo_root).resolve()
+        self.root = Path(workspace.cwd).resolve()
         self.session_store = session_store
         self.approval_policy = approval_policy
         self.max_steps = max_steps if max_steps is not None else harness.get("max_steps", 6)
