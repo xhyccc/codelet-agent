@@ -61,6 +61,7 @@ class MiniAgent:
         sandbox="lite",
         config=None,
         tool_output_callback=None,
+        approve_hook=None,
     ):
         # Use packaged defaults if no config was provided. ``deep_merge``
         # gives us a fresh, mutation-safe copy.
@@ -85,6 +86,14 @@ class MiniAgent:
         self.allowed_ops = allowed_ops
         self.sandbox = sandbox if sandbox in ("off", "lite") else "lite"
         self.tool_output_callback = tool_output_callback
+        # Optional callable invoked just before the interactive approval prompt.
+        # The CLI uses this to stop the spinner so the prompt appears cleanly.
+        self.approve_hook = approve_hook
+        # Optional callables invoked around each model inference call.
+        # The CLI uses these to show/hide the "Thinking..." spinner only
+        # during actual LLM calls, so the spinner is hidden while tools run.
+        self.inference_start_hook = None
+        self.inference_end_hook = None
         self.last_stop_reason = None
         self.last_ask_result = None
         self.last_compaction_stages = []
@@ -328,7 +337,11 @@ class MiniAgent:
             except compaction_module.HardHaltError:
                 final = self._force_compact_history()
                 return _finish(final, StopReason.HARD_HALT_RECOVERED)
+            if self.inference_start_hook:
+                self.inference_start_hook()
             raw = self.model_client.complete(prompt, self.max_new_tokens)
+            if self.inference_end_hook:
+                self.inference_end_hook()
             kind, payload = parsing.parse_model_output(raw, retry_template)
 
             if kind == "tool":
@@ -732,8 +745,13 @@ class MiniAgent:
         if harness_cfg.get("yolo_classifier") and name == "run_shell":
             if self._hardening.is_safe_command(str(args.get("command", ""))):
                 return True
+        if self.approve_hook is not None:
+            self.approve_hook()
         try:
-            answer = input(f"approve {name} {json.dumps(args, ensure_ascii=True)}? [y/N] ")
+            answer = input(
+                f"\napprove {name} {json.dumps(args, ensure_ascii=True)}\n"
+                "  [y/N] "
+            )
         except EOFError:
             return False
         return answer.strip().lower() in {"y", "yes"}

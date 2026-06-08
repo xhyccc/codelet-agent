@@ -181,6 +181,33 @@ def test_env_to_overrides_empty_env():
     assert env_to_overrides({}) == {"cli": {}, "harness": {}}
 
 
+def test_env_to_overrides_long_context_keys():
+    env = {
+        "MINI_AGENT_MAX_TOOL_OUTPUT": "12000",
+        "MINI_AGENT_MAX_HISTORY": "120000",
+        "MINI_AGENT_COMPACTION_TARGET": "80000",
+        "MINI_AGENT_PRESERVE_RECENT": "8",
+        "MINI_AGENT_CHECKPOINT_WATERMARK": "50",
+        "MINI_AGENT_AUTOCOMPACT_TOKENS": "4096",
+    }
+    out = env_to_overrides(env)
+    assert out["harness"]["max_tool_output"] == 12000
+    assert out["harness"]["max_history"] == 120000
+    assert out["harness"]["compaction"] == {
+        "target_chars": 80000,
+        "preserve_recent": 8,
+        "checkpoint_watermark": 50,
+        "autocompact_tokens": 4096,
+    }
+
+
+def test_env_to_overrides_partial_compaction_keys():
+    env = {"MINI_AGENT_COMPACTION_TARGET": "60000"}
+    out = env_to_overrides(env)
+    assert out["harness"]["compaction"] == {"target_chars": 60000}
+    assert "max_tool_output" not in out["harness"]
+
+
 # ----- load_env_config -----------------------------------------------------
 
 

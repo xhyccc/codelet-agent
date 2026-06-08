@@ -14,7 +14,6 @@ uv.lock
 *.egg-info/
 build/
 dist/
-
 # Test and lint caches
 .pytest_cache/
 .ruff_cache/
@@ -23,6 +22,7 @@ htmlcov/
 
 # Temporary files
 .mini-coding-agent
+.codelet
 *.tmp
 *.temp
 *.swp
@@ -39,3 +39,9 @@ tmp/
 # Secrets / local config
 .env
 CLAUDE.local.md
+
+# Session artifacts and generated outputs
+.codelet/
+2026_Nasdaq_IPO_DeepDive.html
+2026_Nasdaq_IPO_DeepDive.md
+compute_pi_hmc.py

@@ -97,7 +97,13 @@ def _is_mcp(item, mcp_tools):
 
 def _item_size(item):
     """Approximate the on-prompt cost of a history item (in characters)."""
-    return len(str(item.get("content", ""))) + len(str(item.get("name", ""))) + 32
+    content = item.get("content", "")
+    if not isinstance(content, str):
+        # Iter 11: handle list/dict tool-content blocks (e.g. complex tool
+        # responses). repr() gives a consistent size estimate without needing
+        # an explicit JSON serialisation import.
+        content = repr(content)
+    return len(content) + len(str(item.get("name", ""))) + 32
 
 
 def render_history_size(history):
@@ -124,6 +130,43 @@ def budget_reduction(history, *, current_budget, target_chars, min_tool_output):
     ratio = target_chars / max(rendered, 1)
     new_budget = max(min_tool_output, int(current_budget * max(ratio, 0.25)))
     return min(current_budget, new_budget)
+
+
+# ---------------------------------------------------------------------------
+# Iter 12: apply_tool_output_budget — write-side complement to budget_reduction
+# ---------------------------------------------------------------------------
+
+
+def apply_tool_output_budget(history, budget, *, mcp_tools=None, fileread_tools=None):
+    """Apply *budget* by clipping over-budget tool outputs.
+
+    This is the write-side complement to :func:`budget_reduction`, which
+    computes a new budget but deliberately does not mutate the history.
+    Applying the budget turns Stage 1 from a pure token-accounting step into
+    an actual space-reclamation step so the size check after Stage 1 can fire.
+
+    MCP outputs (schema-stable) and file-read outputs (model needs full source
+    visibility) are exempt and pass through unchanged.
+
+    Returns a deep copy with over-budget tool outputs truncated.
+    """
+    mcp_tools = list(mcp_tools or [])
+    fileread_tools = list(fileread_tools or [])
+    result = deepcopy(history)
+    for item in result:
+        if item.get("role") != "tool":
+            continue
+        if _is_fileread(item, fileread_tools) or _is_mcp(item, mcp_tools):
+            continue
+        content = item.get("content", "")
+        if not isinstance(content, str):
+            continue
+        if len(content) > budget:
+            item["content"] = (
+                content[:budget].rstrip()
+                + f" ... [budget cap: {len(content) - budget} chars dropped]"
+            )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -454,12 +497,19 @@ def run_cascade(
     if render_history_size(working) <= target:
         return {"history": working, "budget": budget, "stages_applied": applied, "halted": False}
 
-    # Stage 1: budget reduction.
+    # Stage 1: budget reduction — compute new budget AND apply it so the
+    # size check below can actually fire (Iter 12: fix Stage 1 no-op bug).
     budget = budget_reduction(
         working,
         current_budget=budget,
         target_chars=target,
         min_tool_output=cfg["min_tool_output"],
+    )
+    working = apply_tool_output_budget(
+        working,
+        budget,
+        mcp_tools=cfg["mcp_tools"],
+        fileread_tools=cfg["fileread_tools"],
     )
     applied.append("budget_reduction")
     if render_history_size(working) <= target:

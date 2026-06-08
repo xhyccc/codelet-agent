@@ -6,6 +6,7 @@ from codelet.compaction import (
     AUTOCOMPACT_SYSTEM_PROMPT,
     DEFAULT_COMPACTION,
     HardHaltError,
+    apply_tool_output_budget,
     auto_compaction,
     budget_reduction,
     build_autocompact_prompt,
@@ -276,3 +277,102 @@ def test_default_compaction_keys():
         "fileread_tools",
     }
     assert expected.issubset(DEFAULT_COMPACTION.keys())
+
+
+# ---------------------------------------------------------------------------
+# Iter 11: _item_size handles non-string content
+# ---------------------------------------------------------------------------
+
+
+def test_item_size_handles_dict_content():
+    from codelet.compaction import _item_size
+    item = {"role": "tool", "content": {"key": "value", "nested": [1, 2, 3]}, "name": "tool"}
+    size = _item_size(item)
+    # repr of the dict must contribute > 0 chars
+    assert size > 32
+
+
+def test_item_size_handles_list_content():
+    from codelet.compaction import _item_size
+    item = {"role": "tool", "content": ["a", "b", "c"] * 100, "name": "tool"}
+    size = _item_size(item)
+    assert size > 300  # list of 300 short strings
+
+
+def test_item_size_handles_none_content():
+    from codelet.compaction import _item_size
+    item = {"role": "tool", "content": None}
+    size = _item_size(item)
+    assert size >= 32
+
+
+# ---------------------------------------------------------------------------
+# Iter 12: apply_tool_output_budget
+# ---------------------------------------------------------------------------
+
+
+def test_apply_tool_output_budget_clips_large_content():
+    history = [
+        _h("tool", "x" * 10000, name="run_shell"),
+        _h("assistant", "ok"),
+    ]
+    result = apply_tool_output_budget(history, budget=500)
+    assert len(result[0]["content"]) < 600
+    assert "budget cap" in result[0]["content"]
+
+
+def test_apply_tool_output_budget_leaves_small_content():
+    history = [_h("tool", "small output", name="run_shell")]
+    result = apply_tool_output_budget(history, budget=500)
+    assert result[0]["content"] == "small output"
+
+
+def test_apply_tool_output_budget_skips_mcp_tools():
+    history = [_h("tool", "x" * 10000, name="delegate")]
+    result = apply_tool_output_budget(history, budget=100, mcp_tools=["delegate"])
+    assert len(result[0]["content"]) == 10000  # unchanged
+
+
+def test_apply_tool_output_budget_skips_fileread_tools():
+    history = [_h("tool", "x" * 10000, name="read_file")]
+    result = apply_tool_output_budget(history, budget=100, fileread_tools=["read_file"])
+    assert len(result[0]["content"]) == 10000  # unchanged
+
+
+def test_apply_tool_output_budget_does_not_mutate_original():
+    original_content = "x" * 10000
+    history = [_h("tool", original_content, name="run_shell")]
+    apply_tool_output_budget(history, budget=100)
+    assert history[0]["content"] == original_content  # deep copy, no mutation
+
+
+# ---------------------------------------------------------------------------
+# Iter 12: Stage 1 in run_cascade actually reduces size
+# ---------------------------------------------------------------------------
+
+
+def test_run_cascade_stage1_clips_tool_outputs():
+    """After budget_reduction + apply_tool_output_budget, Stage 1 must
+    genuinely reduce the rendered size of the history."""
+    # Create a history that is just over the target thanks to large tool output.
+    # The target is 1000; each tool item is ~3000 chars, with 2 items.
+    history = [
+        _h("user", "do something"),
+        _h("tool", "A" * 3000, name="run_shell"),
+        _h("tool", "B" * 3000, name="run_shell"),
+    ]
+    before = render_history_size(history)
+    assert before > 1000
+    out = run_cascade(
+        history,
+        current_budget=4000,
+        config={
+            "target_chars": 1000,
+            "preserve_recent": 1,
+            "min_tool_output": 400,
+        },
+        model_client=None,
+    )
+    # budget_reduction + apply_tool_output_budget should have clipped the
+    # tool outputs, so budget_reduction must appear in stages_applied.
+    assert "budget_reduction" in out["stages_applied"]

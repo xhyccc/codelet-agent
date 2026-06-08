@@ -55,6 +55,9 @@ BUILTIN_DEFAULTS = {
             "`web_search` and `web_fetch` are read-only network tools; never use them to submit forms or send data.",
             "If `web_fetch` returns HTTP 403 or any access-denied error, do not retry the same domain. Fall back to an open aggregator (Reuters, AP News, BBC, Google News, or a search result snippet) that covers the same topic.",
             "If `web_fetch` returns a site homepage or navigation page (mostly menus, category links, and one-line teasers rather than full article text), extract the specific article URLs from the content and fetch 3-5 of them individually to get the actual stories. Do not summarize or generate output from a bare navigation page \u2014 that is not article content.",
+            "For deep research or audit tasks requiring many web sources, use `delegate` to break the work into focused sub-investigations (one per section or sub-topic), each with `max_steps` of at least 12. This gives each sub-task a clean context window and prevents the parent session from filling up.",
+            "When accumulating findings across many tool calls, periodically save intermediate results to a scratch file (e.g. `_research_notes.md`) using `write_file` or `patch_file`. This preserves data even if the transcript is compacted.",
+            "For broad research tasks covering multiple independent sub-topics, prefer `delegate_parallel` to investigate them concurrently, then synthesise all results in the parent context.",
             'For scripts longer than ~20 lines, use write_file to save the script first, then run_shell {"command": "python script.py"} to execute it. Do NOT try to inline long scripts into run_python.',
             "Use `list_files` when the workspace layout is unknown or you need to confirm a directory exists; it returns an indented tree of files and folders.",
             "Use `read_file` before editing any file or answering questions about its content; pass a path and an optional line range; it returns the lines prefixed with line numbers.",
@@ -112,6 +115,10 @@ BUILTIN_DEFAULTS = {
             "     concrete facts the agent has learned about the workspace.\n"
             "  4. HIGHLY SUMMARIZES the verbose operational history (tool call noise,\n"
             "     stack traces, search results, intermediate state).\n"
+            "  5. PRESERVES all factual findings from web searches and fetches:\n"
+            "     key numbers, dates, quotes, URLs, and named entities.\n"
+            "  6. PRESERVES the structure and completion state of any ongoing\n"
+            "     research outline or report (which sections are done vs pending).\n"
             "\n"
             "Return plain text. Do not invent facts; do not add tool calls."
         ),

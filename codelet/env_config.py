@@ -197,6 +197,34 @@ def env_to_overrides(env):
     if tool_max_timeout is not None:
         harness["tool_max_timeout"] = tool_max_timeout
 
+    # Context-window tuning -- exposed so large-context providers (e.g. Kimi
+    # 128K) can raise the defaults without touching the packaged YAML config.
+    max_tool_output = _coerce_int(env.get("MINI_AGENT_MAX_TOOL_OUTPUT"))
+    if max_tool_output is not None:
+        harness["max_tool_output"] = max_tool_output
+
+    max_history = _coerce_int(env.get("MINI_AGENT_MAX_HISTORY"))
+    if max_history is not None:
+        harness["max_history"] = max_history
+
+    # Compaction sub-config: values here override harness.compaction.* and are
+    # deep-merged so unrelated compaction keys are preserved.
+    compaction: dict = {}
+    cmp_target = _coerce_int(env.get("MINI_AGENT_COMPACTION_TARGET"))
+    if cmp_target is not None:
+        compaction["target_chars"] = cmp_target
+    cmp_preserve = _coerce_int(env.get("MINI_AGENT_PRESERVE_RECENT"))
+    if cmp_preserve is not None:
+        compaction["preserve_recent"] = cmp_preserve
+    cmp_watermark = _coerce_int(env.get("MINI_AGENT_CHECKPOINT_WATERMARK"))
+    if cmp_watermark is not None:
+        compaction["checkpoint_watermark"] = cmp_watermark
+    cmp_tokens = _coerce_int(env.get("MINI_AGENT_AUTOCOMPACT_TOKENS"))
+    if cmp_tokens is not None:
+        compaction["autocompact_tokens"] = cmp_tokens
+    if compaction:
+        harness["compaction"] = compaction
+
     return {"cli": cli, "harness": harness}
 
 

@@ -6,8 +6,10 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.spinner import Spinner
 from rich.table import Table
 
 from prompt_toolkit import PromptSession
@@ -29,14 +31,29 @@ console = Console()
 _SLASH_COMMANDS = ["/exit", "/quit", "/help", "/memory", "/session", "/reset"]
 
 
+_TOOL_PANEL_MAX_WIDTH = 100  # cap panel width so long URLs don't stretch across the terminal
+
+
 def _make_tool_output_callback():
-    """Return a callback that prints tool output in a styled panel after each tool call."""
+    """Return a callback that prints tool output in a styled panel after each tool call.
+
+    Content is rendered as Markdown so tables, bold text, and code fences
+    inside tool results are displayed with proper formatting.  The panel is
+    capped at ``_TOOL_PANEL_MAX_WIDTH`` columns so long URL strings and search
+    snippets stay readable on wide terminals.
+    """
     def callback(name, args, result):
+        content = str(result).strip()
+        # Clamp panel width: never wider than the terminal, and cap at the
+        # constant so results don't sprawl across a 200-column screen.
+        panel_width = min(console.width, _TOOL_PANEL_MAX_WIDTH)
         panel = Panel(
-            str(result).strip(),
+            Markdown(content, justify="left"),
             title=f"🔧 Tool Execution: {name}",
             style="dim",
             border_style="black",
+            width=panel_width,
+            padding=(0, 1),
         )
         console.print(panel)
     return callback
@@ -218,6 +235,49 @@ def build_agent(args):
     )
 
 
+def _ask_with_spinner(agent, user_input, console):
+    """Show a 'Thinking...' spinner only during LLM inference.
+
+    Hooks ``inference_start_hook`` / ``inference_end_hook`` on the agent so
+    the spinner appears exactly when the model is being queried and is
+    hidden during tool execution (which prints its own output panel).
+    ``approve_hook`` stops the spinner before the ``[y/N]`` prompt so it
+    appears on its own uncluttered line.
+    """
+    import threading
+
+    _live_holder = [None]
+    _lock = threading.Lock()
+
+    def _start():
+        with _lock:
+            if _live_holder[0] is None:
+                spinner = Spinner("dots", text="[bold green]Thinking...[/bold green]")
+                live = Live(spinner, console=console, refresh_per_second=12, transient=True)
+                live.start()
+                _live_holder[0] = live
+
+    def _stop():
+        with _lock:
+            live = _live_holder[0]
+            if live is not None:
+                live.stop()
+                _live_holder[0] = None
+
+    agent.inference_start_hook = _start
+    agent.inference_end_hook = _stop
+    agent.approve_hook = _stop
+
+    try:
+        result = agent.ask(user_input)
+    finally:
+        _stop()
+        agent.inference_start_hook = None
+        agent.inference_end_hook = None
+        agent.approve_hook = None
+    return result
+
+
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -390,9 +450,14 @@ def main(argv=None):
             else:
                 console.print()
                 try:
-                    with console.status("[bold green]Thinking...", spinner="dots"):
-                        response = agent.ask(prompt)
-                    console.print(Markdown(response))
+                    response = _ask_with_spinner(agent, prompt, console)
+                    console.print(Panel(
+                        Markdown(response, justify="left"),
+                        title="✦ Answer",
+                        border_style="blue",
+                        width=min(console.width, _TOOL_PANEL_MAX_WIDTH),
+                        padding=(0, 1),
+                    ))
                 except RuntimeError as exc:
                     console.print(str(exc), style="bold red")
                     return 1
@@ -444,8 +509,13 @@ def main(argv=None):
 
         console.print()
         try:
-            with console.status("[bold green]Thinking...", spinner="dots"):
-                response = agent.ask(user_input)
-            console.print(Markdown(response))
+            response = _ask_with_spinner(agent, user_input, console)
+            console.print(Panel(
+                Markdown(response, justify="left"),
+                title="✦ Answer",
+                border_style="blue",
+                width=min(console.width, _TOOL_PANEL_MAX_WIDTH),
+                padding=(0, 1),
+            ))
         except RuntimeError as exc:
             console.print(str(exc), style="bold red")

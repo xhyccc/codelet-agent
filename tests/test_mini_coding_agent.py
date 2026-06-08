@@ -436,6 +436,7 @@ def test_openai_client_posts_expected_payload():
         temperature=0.2,
         top_p=0.9,
         timeout=30,
+        extra_headers={"User-Agent": "claude-code/1.0.0", "x-msh-client": "claude-code"},
     )
 
 

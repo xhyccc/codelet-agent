@@ -35,6 +35,7 @@ from .compaction import (
     CHECKPOINT_SYSTEM_PROMPT,
     DEFAULT_COMPACTION,
     HardHaltError,
+    apply_tool_output_budget,
     auto_compaction,
     budget_reduction,
     build_autocompact_prompt,
@@ -64,10 +65,22 @@ from .env_config import (
 )
 from .memory_files import (
     DEFAULT_MAX_FILES,
+    ENTRYPOINT_NAME,
     LAYER_WEIGHTS,
+    MAX_SCAN_FILES,
+    MEMORY_TYPES,
+    MemoryHeader,
     discover_memory_files,
+    ensure_memory_dir_exists,
+    format_memory_manifest,
+    is_auto_memory_enabled,
+    memory_age_days,
+    memory_freshness_text,
     render_memory_files,
+    scan_memory_headers,
     select_memory_files,
+    truncate_entrypoint_content,
+    validate_memory_path,
 )
 from .parsing import (
     extract,
