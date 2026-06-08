@@ -657,7 +657,7 @@ class ToolRegistry:
     # ---- net tools -----------------------------------------------------
 
     def tool_web_search(self, args):
-        """Search the web using multiple backends: SearXNG → DDG Instant Answers → Perplexity (if key available)."""
+        """Search the web using multiple backends: DDG Instant Answers → SearXNG → Perplexity (if key available)."""
         agent = self.agent
         query = str(args.get("query", "")).strip()
         max_results = min(int(args.get("max_results", 5)), 10)
@@ -665,12 +665,12 @@ class ToolRegistry:
 
         results = []
 
-        # 1. Try SearXNG public instances (fast, no API key, most complete)
-        results = self._search_searxng(query, max_results, timeout)
+        # 1. Try DuckDuckGo Instant Answers API (fast, no API key, reliable for factual queries)
+        results = self._search_ddg_instant(query, max_results, timeout)
 
-        # 2. Try DuckDuckGo Instant Answers API (reliable for factual queries)
+        # 2. Fallback to SearXNG public instances (general web search, no API key)
         if not results:
-            results = self._search_ddg_instant(query, max_results, timeout)
+            results = self._search_searxng(query, max_results, timeout)
 
         # 3. Try Perplexity via OpenRouter (requires OPENROUTER_API_KEY)
         if not results:
@@ -680,6 +680,7 @@ class ToolRegistry:
             return (
                 "No results found. Web search is currently unavailable.\n"
                 "This usually means:\n"
+                "  • The query is not a well-known topic in DuckDuckGo's database\n"
                 "  • Public search instances are temporarily down or rate-limited\n"
                 "  • No search API key is configured\n\n"
                 "To fix:\n"
