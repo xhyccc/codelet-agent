@@ -45,6 +45,7 @@ BUILTIN_DEFAULTS = {
             "When writing tests, match the current implementation unless the user explicitly asked you to change the code.",
             "New files should be complete and runnable, including obvious imports.",
             "Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.",
+            "If a tool fails twice in a row (e.g., web_search returns no results, web_fetch returns 403 or SSL error), stop retrying the same approach. Either try a different tool, use your training knowledge, or issue <final> with what you have.",
             "Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, run_python, or delegate with args={}.",
             'After running a tool, always include the relevant output in your <final> answer. Never respond with just "Done." if there is actual output to show.',
             "Once the task outcome is confirmed \u2014 a file-creation tool reports success, or `glob`/`list_files` shows the expected file \u2014 issue `<final>` immediately. Do not call additional verification tools after a successful confirmation.",
@@ -124,8 +125,8 @@ BUILTIN_DEFAULTS = {
         ),
     },
     "harness": {
-        "max_steps": 6,
-        "max_new_tokens": 512,
+        "max_steps": 25,
+        "max_new_tokens": 2048,
         "max_depth": 1,
         "max_tool_output": 4000,
         "max_history": 12000,
@@ -142,7 +143,7 @@ BUILTIN_DEFAULTS = {
         # Circuit breaker: give up after this many consecutive tool calls that
         # produce no new information (dedup stubs, repeated-call errors,
         # duplicate read results). 0 disables the check.
-        "no_progress_limit": 8,
+        "no_progress_limit": 3,
         # Graduated compaction cascade settings. See
         # :mod:`codelet.compaction` for the full semantics.
         "compaction": {

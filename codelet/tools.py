@@ -15,6 +15,7 @@ import re as _re
 import shutil
 import subprocess
 import sys
+import ssl
 import time
 import urllib.parse
 import urllib.request
@@ -656,76 +657,229 @@ class ToolRegistry:
     # ---- net tools -----------------------------------------------------
 
     def tool_web_search(self, args):
-        """Search via DuckDuckGo Lite and return structured results."""
+        """Search the web using multiple backends: SearXNG → DDG Instant Answers → Perplexity (if key available)."""
         agent = self.agent
         query = str(args.get("query", "")).strip()
         max_results = min(int(args.get("max_results", 5)), 10)
         timeout = int((agent.config.get("harness") or {}).get("tool_timeout", 20))
 
-        url = "https://lite.duckduckgo.com/lite/?" + urllib.parse.urlencode({"q": query})
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
+        results = []
 
-        class _Parser(HTMLParser):
-            def __init__(self):
-                super().__init__(convert_charrefs=True)
-                self.results = []
-                self._link = None
-                self._snip = None
-                self._buf = []
-                self._in = None
+        # 1. Try SearXNG public instances (fast, no API key, most complete)
+        results = self._search_searxng(query, max_results, timeout)
 
-            def handle_starttag(self, tag, attrs):
-                ad = dict(attrs)
-                cls = ad.get("class", "")
-                if tag == "a" and "result-link" in cls:
-                    self._link = ad.get("href", "")
-                    self._buf, self._in = [], "link"
-                elif tag == "td" and "result-snippet" in cls:
-                    self._buf, self._in = [], "snip"
-                elif tag == "span" and "link-text" in cls:
-                    self._buf, self._in = [], "url"
+        # 2. Try DuckDuckGo Instant Answers API (reliable for factual queries)
+        if not results:
+            results = self._search_ddg_instant(query, max_results, timeout)
 
-            def handle_endtag(self, tag):
-                if tag == "a" and self._in == "link":
-                    title = " ".join(self._buf).strip()
-                    self._snip = {"url": self._link, "title": title, "snippet": ""}
-                    self._in = None
-                elif tag == "td" and self._in == "snip":
-                    if self._snip is not None:
-                        self._snip["snippet"] = " ".join(self._buf).strip()
-                        self.results.append(self._snip)
-                        self._snip = None
-                    self._in = None
-
-            def handle_data(self, data):
-                if self._in:
-                    self._buf.append(data)
-
-        p = _Parser()
-        p.feed(body)
-        results = p.results[:max_results]
+        # 3. Try Perplexity via OpenRouter (requires OPENROUTER_API_KEY)
+        if not results:
+            results = self._search_perplexity_openrouter(query, max_results, timeout)
 
         if not results:
-            return "No results found."
+            return (
+                "No results found. Web search is currently unavailable.\n"
+                "This usually means:\n"
+                "  • Public search instances are temporarily down or rate-limited\n"
+                "  • No search API key is configured\n\n"
+                "To fix:\n"
+                "  1. Set OPENROUTER_API_KEY in your environment for Perplexity search\n"
+                "  2. Use web_fetch with a specific known URL instead\n"
+                "  3. For well-known topics, rely on your training knowledge"
+            )
+
         lines = []
         for i, r in enumerate(results, 1):
             lines.append(f"{i}. {r['title']}")
             lines.append(f"   URL: {r['url']}")
-            if r["snippet"]:
+            if r.get("snippet"):
                 lines.append(f"   {r['snippet']}")
         return "\n".join(lines)
+
+    def _search_searxng(self, query, max_results, timeout):
+        """Search via public SearXNG instances (JSON API, no scraping)."""
+        # Rotating list — these are community instances that expose the JSON API.
+        # The list is ordered by historical reliability; dead instances are skipped.
+        instances = [
+            "https://search.sapti.me",
+            "https://search.bus-hit.me",
+            "https://search.demoniak.ch",
+            "https://search.projectsegfault.com",
+            "https://search.nordvedt.com",
+            "https://search.rhscz.eu",
+        ]
+        for instance in instances:
+            try:
+                url = (
+                    f"{instance}/search?"
+                    + urllib.parse.urlencode(
+                        {"q": query, "format": "json", "language": "en-US"}
+                    )
+                )
+                headers = {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36"
+                    ),
+                    "Accept": "application/json",
+                }
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8", errors="replace"))
+                results = []
+                for r in data.get("results", [])[:max_results]:
+                    results.append(
+                        {
+                            "url": r.get("url", ""),
+                            "title": _re.sub(r"<[^>]+>", "", r.get("title", "")).strip(),
+                            "snippet": _re.sub(
+                                r"<[^>]+>", "", r.get("content", "")
+                            ).strip(),
+                        }
+                    )
+                if results:
+                    return results
+            except Exception:
+                continue
+        return []
+
+    def _search_ddg_instant(self, query, max_results, timeout):
+        """DuckDuckGo Instant Answers API — reliable for factual / well-known topics."""
+        try:
+            url = (
+                "https://api.duckduckgo.com/?"
+                + urllib.parse.urlencode(
+                    {"q": query, "format": "json", "no_html": 1, "skip_disambig": 1}
+                )
+            )
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                ),
+                "Accept": "application/json",
+            }
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+
+            results = []
+            # Main abstract
+            abstract = data.get("Abstract", "").strip()
+            abstract_url = data.get("AbstractURL", "").strip()
+            if abstract and abstract_url:
+                results.append(
+                    {
+                        "url": abstract_url,
+                        "title": data.get("Heading", query),
+                        "snippet": abstract,
+                    }
+                )
+            # Related topics
+            for topic in data.get("RelatedTopics", [])[:max_results]:
+                if isinstance(topic, dict):
+                    text = topic.get("Text", "").strip()
+                    topic_url = topic.get("FirstURL", "").strip()
+                    if text and topic_url:
+                        results.append(
+                            {
+                                "url": topic_url,
+                                "title": text.split(" - ")[0] if " - " in text else text[:60],
+                                "snippet": text,
+                            }
+                        )
+                if len(results) >= max_results:
+                    break
+            # Results array (rarely populated, but useful when it is)
+            for r in data.get("Results", [])[:max_results]:
+                if isinstance(r, dict):
+                    text = r.get("Text", "").strip()
+                    result_url = r.get("FirstURL", "").strip()
+                    if text and result_url:
+                        results.append(
+                            {
+                                "url": result_url,
+                                "title": text.split(" - ")[0] if " - " in text else text[:60],
+                                "snippet": text,
+                            }
+                        )
+                if len(results) >= max_results:
+                    break
+            return results[:max_results]
+        except Exception:
+            return []
+
+    def _search_perplexity_openrouter(self, query, max_results, timeout):
+        """Perplexity Sonar via OpenRouter — requires OPENROUTER_API_KEY env var."""
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if not api_key:
+            return []
+        try:
+            payload = json.dumps(
+                {
+                    "model": "perplexity/sonar",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a search assistant. Return a JSON array of search results. "
+                                "Each result must have: title, url, snippet. "
+                                f"Return at most {max_results} results."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Search the web for: {query}",
+                        },
+                    ],
+                    "max_tokens": 1024,
+                }
+            ).encode("utf-8")
+            req = urllib.request.Request(
+                "https://openrouter.ai/api/v1/chat/completions",
+                data=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://codelet.local",
+                    "X-Title": "Codelet",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+
+            content = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+                .strip()
+            )
+            # Try to parse JSON array from the response
+            try:
+                results = json.loads(content)
+                if isinstance(results, list):
+                    return [
+                        {
+                            "url": r.get("url", r.get("link", "")),
+                            "title": r.get("title", "")[:120],
+                            "snippet": r.get("snippet", r.get("description", ""))[:300],
+                        }
+                        for r in results[:max_results]
+                    ]
+            except json.JSONDecodeError:
+                # If the model didn't return valid JSON, treat the whole response as one result
+                lines = [l.strip() for l in content.splitlines() if l.strip()]
+                if lines:
+                    return [
+                        {
+                            "url": "",
+                            "title": lines[0][:120],
+                            "snippet": " ".join(lines[1:])[:400],
+                        }
+                    ]
+            return []
+        except Exception:
+            return []
 
     def tool_web_fetch(self, args):
         """Fetch a URL using a real headless browser (Playwright/Chromium).
@@ -854,6 +1008,19 @@ class ToolRegistry:
                 with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                     content_type = resp.headers.get("Content-Type", "")
                     raw = resp.read(1024 * 1024)
+            except ssl.SSLError:
+                # Retry with certificate verification disabled for sites with
+                # self-signed or mismatched certificates (e.g., ir.weibo.com).
+                try:
+                    ctx = ssl._create_unverified_context()
+                    with urllib.request.urlopen(req, timeout=timeout_s, context=ctx) as resp:
+                        content_type = resp.headers.get("Content-Type", "")
+                        raw = resp.read(1024 * 1024)
+                except Exception as e:
+                    return (
+                        f"error: could not reach {url} due to SSL certificate issue: {e}. "
+                        "Do NOT retry this URL. Use web_search snippets instead."
+                    )
             except urllib.error.HTTPError as e:
                 return (
                     f"error: {url} returned HTTP {e.code} {e.reason}. "
