@@ -18,7 +18,7 @@ from codelet.hardening import (
 
 def _agent(tmp_path, config=None):
     ws = WorkspaceContext.build(str(tmp_path))
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     return MiniAgent(
         model_client=FakeModelClient(["<final>ok</final>"]),
         workspace=ws,
@@ -108,10 +108,12 @@ def test_yolo_classifier_rejects(cmd):
 
 
 def test_undercover_enabled_via_env():
-    assert undercover_enabled({"MINI_AGENT_UNDERCOVER": "1"}) is True
-    assert undercover_enabled({"MINI_AGENT_UNDERCOVER": "true"}) is True
+    assert undercover_enabled({"CODELET_UNDERCOVER": "1"}) is True
+    assert undercover_enabled({"CODELET_UNDERCOVER": "true"}) is True
     assert undercover_enabled({}) is False
-    assert undercover_enabled({"MINI_AGENT_UNDERCOVER": "0"}) is False
+    assert undercover_enabled({"CODELET_UNDERCOVER": "0"}) is False
+    # Backward compatibility: legacy env var still recognised.
+    assert undercover_enabled({"MINI_AGENT_UNDERCOVER": "1"}) is True
 
 
 def test_apply_undercover_identity_replaces_field():
@@ -120,13 +122,14 @@ def test_apply_undercover_identity_replaces_field():
 
 
 def test_agent_uses_undercover_identity_when_env_set(tmp_path, monkeypatch):
-    monkeypatch.setenv("MINI_AGENT_UNDERCOVER", "1")
+    monkeypatch.setenv("CODELET_UNDERCOVER", "1")
     agent = _agent(tmp_path, config={"prompts": {"agent_identity": "Original Captain"}})
     assert UNDERCOVER_IDENTITY.split(".")[0] in agent.prefix
     assert "Original Captain" not in agent.prefix
 
 
 def test_agent_keeps_original_identity_when_env_not_set(tmp_path, monkeypatch):
+    monkeypatch.delenv("CODELET_UNDERCOVER", raising=False)
     monkeypatch.delenv("MINI_AGENT_UNDERCOVER", raising=False)
     agent = _agent(tmp_path, config={"prompts": {"agent_identity": "Original Captain"}})
     assert "Original Captain" in agent.prefix

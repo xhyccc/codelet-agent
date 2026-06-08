@@ -172,7 +172,7 @@ class MiniAgent:
             manifest = skills_module.render_skill_manifest(self.skills)
             if manifest:
                 project_rules_text = (project_rules_text + "\n\n" + manifest).strip()
-        # Undercover mode: if MINI_AGENT_UNDERCOVER=1, replace the identity
+        # Undercover mode: if CODELET_UNDERCOVER=1, replace the identity
         # layer with a generic helpful-assistant string before the prefix
         # is assembled.  This is intentionally cheap so eval runs do not
         # need a separate config file.

@@ -104,7 +104,7 @@ def test_load_config_rejects_non_mapping_file(tmp_path):
 
 
 def test_discover_workspace_config_finds_dotfile(tmp_path):
-    nested = tmp_path / ".mini-coding-agent"
+    nested = tmp_path / ".codelet"
     nested.mkdir()
     cfg = nested / "config.yaml"
     cfg.write_text("harness:\n  max_steps: 7\n", encoding="utf-8")
@@ -117,14 +117,14 @@ def test_discover_workspace_config_returns_none_when_missing(tmp_path):
 
 def test_load_project_rules_concatenates_files(tmp_path):
     (tmp_path / "AGENTS.md").write_text("# Agent rules\nBe terse.\n", encoding="utf-8")
-    nested = tmp_path / ".mini-coding-agent"
+    nested = tmp_path / ".codelet"
     nested.mkdir()
     (nested / "rules.md").write_text("Always write tests.\n", encoding="utf-8")
 
-    text = load_project_rules(tmp_path, ["AGENTS.md", ".mini-coding-agent/rules.md"])
+    text = load_project_rules(tmp_path, ["AGENTS.md", ".codelet/rules.md"])
     assert "# AGENTS.md" in text
     assert "Be terse." in text
-    assert "# .mini-coding-agent/rules.md" in text
+    assert "# .codelet/rules.md" in text
     assert "Always write tests." in text
 
 

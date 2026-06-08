@@ -58,7 +58,7 @@ def test_dedupe_lines_collapses_repeats():
 
 def test_stop_reason_final(tmp_path):
     ws = WorkspaceContext.build(str(tmp_path))
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     client = FakeModelClient(["<final>done</final>"])
     agent = MiniAgent(model_client=client, workspace=ws, session_store=store, approval_policy="auto")
     out = agent.ask("hi")
@@ -70,7 +70,7 @@ def test_stop_reason_final(tmp_path):
 
 def test_stop_reason_step_limit(tmp_path):
     ws = WorkspaceContext.build(str(tmp_path))
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     # Endless list_files calls; max_steps=2 so loop trips step limit.
     client = FakeModelClient([
         '<tool name="list_files"><arg name="path">.</arg></tool>',
@@ -94,7 +94,7 @@ def test_stop_reason_step_limit(tmp_path):
 
 def test_repeated_error_giveup(tmp_path):
     ws = WorkspaceContext.build(str(tmp_path))
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     # Force the agent to repeatedly call read_file on a path that doesn't
     # exist. Each call yields an "error: ..." string and after threshold
     # consecutive errors the loop bails out.

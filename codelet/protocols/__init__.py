@@ -1,4 +1,4 @@
-"""Optional protocol integrations for mini-coding-agent.
+"""Optional protocol integrations for codelet.
 
 Each submodule is independently importable and has no required runtime
 dependencies beyond the Python standard library:

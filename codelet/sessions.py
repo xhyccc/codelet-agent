@@ -1,6 +1,6 @@
 """Session persistence: save and resume agent transcripts.
 
-Each session is a JSON file on disk under ``.mini-coding-agent/sessions``.
+Each session is a JSON file on disk under ``.codelet/sessions``.
 """
 
 import json
@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 class SessionStore:
-    """JSON-backed session storage rooted at ``<workspace>/.mini-coding-agent/sessions``."""
+    """JSON-backed session storage rooted at ``<workspace>/.codelet/sessions``."""
 
     def __init__(self, root):
         self.root = Path(root)

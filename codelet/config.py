@@ -5,7 +5,7 @@ defaults shipped with the package live in ``config/default.yaml``. Users can
 override any subset of them via:
 
 * ``--config PATH`` on the CLI
-* ``.mini-coding-agent/config.yaml`` at the root of the workspace (auto-discovered)
+* ``.codelet/config.yaml`` at the root of the workspace (auto-discovered)
 
 PyYAML is an optional dependency. When PyYAML is not installed we fall back to
 :data:`BUILTIN_DEFAULTS`, a hard-coded copy of ``default.yaml`` content. That
@@ -66,7 +66,7 @@ BUILTIN_DEFAULTS = {
             "Use `run_shell` to run tests, build commands, or inspect CLI output; it returns combined stdout and stderr.",
             "Use `write_file` or `run_python` to create a new file or fully replace an existing one; prefer `write_file` for plain text content and `run_python` when the file content must be generated programmatically.",
             "Use `patch_file` to make a targeted in-place edit to an existing file; `old_text` must match exactly once; it returns a unified diff.",
-            "Use `delete_file` to remove a file that is no longer needed; it is reversible \u2014 the file moves to .mini-coding-agent/trash/.",
+            "Use `delete_file` to remove a file that is no longer needed; it is reversible \u2014 the file moves to .codelet/trash/.",
             "Use `move_file` to rename or relocate a file within the workspace.",
             "Use `run_python` to compute, validate logic, run experiments, or generate files programmatically; it returns stdout and stderr.",
             "Use `delegate` when a sub-task benefits from a fresh bounded agent with a clean context window; it returns the child agent's final answer. Child agents inherit the parent's permissions and can write files, run shell commands, and execute Python. For web research tasks that require multiple search and fetch steps, pass `max_steps` of at least 8.",
@@ -157,7 +157,7 @@ BUILTIN_DEFAULTS = {
             "autocompact_tokens": 2048,
         },
     },
-    "project_rules_files": ["AGENTS.md", ".mini-coding-agent/rules.md"],
+    "project_rules_files": ["AGENTS.md", ".codelet/rules.md"],
     # Hierarchical filesystem-backed memory (see codelet.memory_files).
     # Set ``enabled: false`` to disable; otherwise the agent scans well-known
     # CLAUDE.md / AGENTS.md / .claude/rules/*.md / CLAUDE.local.md locations
@@ -217,7 +217,7 @@ def discover_workspace_config(repo_root):
     """Return the path to a workspace-level config override if present."""
     if not repo_root:
         return None
-    candidate = Path(repo_root) / ".mini-coding-agent" / "config.yaml"
+    candidate = Path(repo_root) / ".codelet" / "config.yaml"
     return candidate if candidate.is_file() else None
 
 

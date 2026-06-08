@@ -33,7 +33,7 @@ from codelet.protocols import (
 
 def _build_agent(tmp_path, scripted=None):
     ws = WorkspaceContext.build(str(tmp_path))
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     return MiniAgent(
         model_client=FakeModelClient(scripted or ["<final>ok</final>"]),
         workspace=ws,
@@ -150,7 +150,7 @@ def test_mcp_server_handles_initialize_and_tools_list(tmp_path):
     assert len(lines) == 2
     init_resp = json.loads(lines[0])
     list_resp = json.loads(lines[1])
-    assert init_resp["result"]["serverInfo"]["name"] == "mini-coding-agent"
+    assert init_resp["result"]["serverInfo"]["name"] == "codelet"
     tools = list_resp["result"]["tools"]
     names = {t["name"] for t in tools}
     assert "read_file" in names
@@ -195,7 +195,7 @@ def test_a2a_server_serves_agent_card_and_task(tmp_path):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/.well-known/agent.json",
                                     timeout=5.0) as resp:
             card = json.loads(resp.read().decode("utf-8"))
-        assert card["name"] == "mini-coding-agent"
+        assert card["name"] == "codelet"
 
         # POST a task.
         body = json.dumps({"id": "t1", "message": "ping"}).encode("utf-8")

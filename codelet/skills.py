@@ -1,6 +1,6 @@
-"""Progressive-disclosure skills for mini-coding-agent.
+"""Progressive-disclosure skills for codelet.
 
-A *skill* is just a directory under ``.mini-coding-agent/skills/`` with
+A *skill* is just a directory under ``.codelet/skills/`` with
 a ``SKILL.md`` file whose front-matter (or first commented block)
 declares a ``name`` and ``description``::
 
@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-SKILL_DIR_NAME = ".mini-coding-agent/skills"
+SKILL_DIR_NAME = ".codelet/skills"
 _FRONT_MATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 
 
@@ -120,7 +120,7 @@ def _parse_skill_file(skill_dir: Path) -> Optional[Skill]:
 
 
 def discover_skills(repo_root) -> List[Skill]:
-    """Scan ``<repo>/.mini-coding-agent/skills/*/SKILL.md``."""
+    """Scan ``<repo>/.codelet/skills/*/SKILL.md``."""
     base = Path(repo_root) / SKILL_DIR_NAME
     if not base.is_dir():
         return []

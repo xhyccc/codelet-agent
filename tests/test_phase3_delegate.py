@@ -14,7 +14,7 @@ from codelet import (
 
 def _agent(tmp_path, scripted=None):
     ws = WorkspaceContext.build(str(tmp_path))
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     client = FakeModelClient(scripted or ["<final>noop</final>"])
     return MiniAgent(
         model_client=client, workspace=ws, session_store=store,
@@ -39,7 +39,7 @@ def test_delegate_parallel_runs_two_children(tmp_path):
             return self._response
 
     ws = WorkspaceContext.build(str(tmp_path))
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
     client = Replay("<final>child answered</final>")
     agent = MiniAgent(
         model_client=client, workspace=ws, session_store=store,
@@ -55,7 +55,7 @@ def test_delegate_parallel_runs_two_children(tmp_path):
     for entry in payload:
         assert "child answered" in entry.get("result", "")
     # A log file should have been written.
-    logs = list((tmp_path / ".mini-coding-agent" / "delegated").glob("*.json"))
+    logs = list((tmp_path / ".codelet" / "delegated").glob("*.json"))
     assert len(logs) == 1
 
 

@@ -1,4 +1,4 @@
-"""Hardening goodies for the mini-coding-agent.
+"""Hardening goodies for the codelet agent.
 
 This module bundles three small, optional countermeasures inspired by
 patterns observed in production coding agents:
@@ -10,7 +10,7 @@ patterns observed in production coding agents:
   obviously safe shell commands (``ls``, ``pwd``, ``cat``, ``grep`` ...)
   so the ``ask`` approval policy can auto-approve trivially-safe
   invocations without nagging the user.
-* **Undercover identity** -- when the ``MINI_AGENT_UNDERCOVER`` env var
+* **Undercover identity** -- when the ``CODELET_UNDERCOVER`` env var
   is set, swap the agent identity for a generic "helpful assistant"
   string and suppress the welcome banner.  Useful for benchmark / eval
   runs where you do not want the model to recognise the harness.
