@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>codexlet</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <h1>codexlet</h1>
+        <form id="new-session-form">
+          <label for="workspacePath">Workspace folder</label>
+          <input id="workspacePath" placeholder="/absolute/path/to/workspace" required />
+          <label for="sessionTitle">Session title (optional)</label>
+          <input id="sessionTitle" placeholder="My session" />
+          <button type="submit">Create session</button>
+        </form>
+        <div class="sessions">
+          <h2>Sessions</h2>
+          <ul id="session-list"></ul>
+        </div>
+      </aside>
+      <main class="main">
+        <header id="session-header">Select or create a session.</header>
+        <section id="chat-log" class="chat-log"></section>
+        <form id="chat-form" class="chat-form">
+          <textarea id="chat-input" placeholder="Type your message..." rows="3" required></textarea>
+          <button type="submit">Send</button>
+        </form>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>
