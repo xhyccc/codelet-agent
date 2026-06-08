@@ -5,32 +5,222 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>codexlet</title>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
   </head>
   <body>
-    <div class="layout">
+    <div class="app">
+      <!-- Sidebar -->
       <aside class="sidebar">
-        <h1>codexlet</h1>
-        <form id="new-session-form">
-          <label for="workspacePath">Workspace folder</label>
-          <input id="workspacePath" placeholder="/absolute/path/to/workspace" required />
-          <label for="sessionTitle">Session title (optional)</label>
-          <input id="sessionTitle" placeholder="My session" />
-          <button type="submit">Create session</button>
-        </form>
-        <div class="sessions">
-          <h2>Sessions</h2>
-          <ul id="session-list"></ul>
+        <!-- Window controls area (macOS style) -->
+        <div class="window-controls">
+          <div class="traffic-lights">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+          </div>
+          <button class="sidebar-toggle" title="Toggle sidebar">&#9776;</button>
+        </div>
+
+        <!-- Work / Chat tabs -->
+        <div class="sidebar-tabs">
+          <button class="tab-btn active" data-tab="work">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+            Work
+          </button>
+          <button class="tab-btn" data-tab="chat">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            Chat
+          </button>
+        </div>
+
+        <!-- New Task button -->
+        <button class="new-task-btn" id="new-task-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+          New Task
+          <span class="shortcut">&#8984;K</span>
+        </button>
+
+        <!-- Navigation -->
+        <nav class="sidebar-nav">
+          <button class="nav-item" data-view="skills">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+            Skills
+          </button>
+          <button class="nav-item" data-view="scheduled">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            Scheduled Tasks
+          </button>
+          <button class="nav-item" data-view="webbridge">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+            WebBridge
+          </button>
+        </nav>
+
+        <!-- Projects section -->
+        <div class="sidebar-section">
+          <div class="section-header">
+            <span class="section-title">Project</span>
+          </div>
+          <div class="project-tree" id="project-tree">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- Chats section -->
+        <div class="sidebar-section">
+          <div class="section-header">
+            <span class="section-title">Chats</span>
+          </div>
+          <ul class="chat-list" id="chat-list">
+            <!-- Dynamically populated -->
+          </ul>
+          <div class="empty-chats" id="empty-chats">Your chats will appear here</div>
+        </div>
+
+        <!-- User profile -->
+        <div class="user-profile">
+          <div class="avatar">HX</div>
+          <div class="user-info">
+            <div class="user-name">Haoyi Xiong</div>
+            <div class="user-status">Allegretto</div>
+          </div>
+          <button class="user-menu-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
         </div>
       </aside>
+
+      <!-- Main content -->
       <main class="main">
-        <header id="session-header">Select or create a session.</header>
-        <section id="chat-log" class="chat-log"></section>
-        <form id="chat-form" class="chat-form">
-          <textarea id="chat-input" placeholder="Type your message..." rows="3" required></textarea>
-          <button type="submit">Send</button>
-        </form>
+        <!-- Welcome screen -->
+        <div class="welcome-screen" id="welcome-screen">
+          <div class="welcome-content">
+            <div class="welcome-mascot">
+              <div class="mascot-icon">&#129302;</div>
+              <div class="mascot-badge">&#9889;</div>
+            </div>
+            <h1 class="welcome-title">Let's take something off your plate</h1>
+            <div class="beta-badge">Beta Preview</div>
+          </div>
+        </div>
+
+        <!-- Chat view (hidden by default) -->
+        <div class="chat-view" id="chat-view" style="display: none;">
+          <header class="chat-header" id="chat-header">
+            <div class="chat-header-info">
+              <span class="chat-title" id="chat-title">Select or create a session</span>
+              <span class="chat-path" id="chat-path"></span>
+            </div>
+            <div class="chat-header-actions">
+              <button class="icon-btn" id="settings-btn" title="Settings">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              </button>
+            </div>
+          </header>
+          <section class="chat-log" id="chat-log"></section>
+        </div>
+
+        <!-- Input area -->
+        <div class="input-area" id="input-area">
+          <div class="input-container">
+            <textarea
+              id="chat-input"
+              class="chat-input"
+              placeholder="What would you like to build?"
+              rows="1"
+            ></textarea>
+            <div class="input-toolbar">
+              <div class="toolbar-left">
+                <button class="toolbar-btn" id="attach-btn" title="Add attachments">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                </button>
+                <div class="dropdown" id="access-dropdown">
+                  <button class="toolbar-btn dropdown-toggle" id="access-toggle">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                    Full access
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  </button>
+                  <div class="dropdown-menu" id="access-menu">
+                    <div class="dropdown-item active" data-value="full">
+                      <div class="item-icon">&#128275;</div>
+                      <div class="item-content">
+                        <div class="item-title">Full access</div>
+                        <div class="item-desc">Can read, write, and execute commands</div>
+                      </div>
+                    </div>
+                    <div class="dropdown-item" data-value="read">
+                      <div class="item-icon">&#128270;</div>
+                      <div class="item-content">
+                        <div class="item-title">Read only</div>
+                        <div class="item-desc">Can only read files and search</div>
+                      </div>
+                    </div>
+                    <div class="dropdown-item" data-value="ask">
+                      <div class="item-icon">&#128172;</div>
+                      <div class="item-content">
+                        <div class="item-title">Ask before act</div>
+                        <div class="item-desc">Will ask for approval on risky actions</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="toolbar-right">
+                <div class="mode-toggle" id="mode-toggle">
+                  <button class="mode-btn" data-mode="agent">Agent</button>
+                  <button class="mode-btn active" data-mode="swarm">Agent Swarm</button>
+                </div>
+                <button class="send-btn" id="send-btn">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="project-selector">
+            <button class="project-toggle" id="project-toggle">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+              <span id="current-project">codelet-agent</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
+            <div class="project-menu" id="project-menu">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
       </main>
     </div>
+
+    <!-- New Task Modal -->
+    <div class="modal-overlay" id="new-task-modal" style="display: none;">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>New Task</h2>
+          <button class="modal-close" id="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <form id="new-session-form">
+            <div class="form-group">
+              <label for="workspacePath">Workspace folder</label>
+              <input id="workspacePath" type="text" placeholder="/absolute/path/to/workspace" required />
+            </div>
+            <div class="form-group">
+              <label for="sessionTitle">Task title (optional)</label>
+              <input id="sessionTitle" type="text" placeholder="e.g., Fix login bug" />
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+              <button type="submit" class="btn-primary">Create Task</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>
