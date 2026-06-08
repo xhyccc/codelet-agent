@@ -1,4 +1,4 @@
-"""Mini-Coding-Agent: a small, configurable coding agent.
+"""Codelet: a small, configurable coding agent derived from Mini-Coding-Agent.
 
 This package replaces the original single-file ``codelet.py``. The
 public API (everything historically importable from ``codelet``) is

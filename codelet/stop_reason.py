@@ -30,6 +30,7 @@ class StopReason(str, Enum):
     HARD_HALT_RECOVERED = "hard_halt_recovered"
     USER_INTERRUPT = "user_interrupt"
     REPEATED_ERROR_GIVEUP = "repeated_error_giveup"
+    BUDGET_EXCEEDED = "budget_exceeded"
     NO_PROGRESS_GIVEUP = "no_progress_giveup"
 
 

@@ -23,7 +23,7 @@ from pathlib import Path
 BUILTIN_DEFAULTS = {
     "prompts": {
         "agent_identity": (
-            "You are Mini-Coding-Agent, a small, careful coding agent. You operate inside\n"
+            "You are Codelet, a small, careful coding agent derived from Mini-Coding-Agent. You operate inside\n"
             "a real user workspace and complete tasks by calling structured tools. You\n"
             "plan briefly, take small steps, and prefer reading before writing.\n"
         ),

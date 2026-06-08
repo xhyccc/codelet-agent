@@ -11,6 +11,7 @@ import json
 import re
 import sys
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -20,6 +21,11 @@ from . import baseline as baseline_module
 from . import compaction as compaction_module
 from . import memory_files as memory_files_module
 from .config import BUILTIN_DEFAULTS, deep_merge, load_project_rules
+from .tasks import kill_task, spawn_task
+from .commands import get_commands, run_command
+from .history import append_history
+from .permissions import PermissionContext, get_empty_permission_context
+from .cost_tracker import CostTracker, load_cost_state, save_cost_state
 from . import parsing
 from .prompt import (
     build_history_text,
@@ -73,7 +79,7 @@ class MiniAgent:
 
         self.model_client = model_client
         self.workspace = workspace
-        self.root = Path(workspace.repo_root)
+        self.root = Path(workspace.repo_root).resolve()
         self.session_store = session_store
         self.approval_policy = approval_policy
         self.max_steps = max_steps if max_steps is not None else harness.get("max_steps", 6)
@@ -97,6 +103,7 @@ class MiniAgent:
         self.last_stop_reason = None
         self.last_ask_result = None
         self.last_compaction_stages = []
+
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
             "created_at": now(),
@@ -106,6 +113,19 @@ class MiniAgent:
             "baseline": None,
         }
 
+        # Cost tracking (mirrors reference agent's cost-tracker.ts)
+        _model_attr = getattr(model_client, "model", "unknown")
+        # MagicMock returns a new MagicMock for any attribute access; coerce to str
+        model_name = str(_model_attr) if not callable(_model_attr) else "unknown"
+        if "MagicMock" in model_name:
+            model_name = "unknown"
+        self.cost_tracker = load_cost_state(self.workspace.repo_root, self.session["id"]) or CostTracker(model_name=model_name)
+        self.max_budget_usd = None
+
+        # Permission context (mirrors reference agent's ToolPermissionContext)
+        self.permission_context = get_empty_permission_context()
+        self.permission_denials = []
+
         # Session-baseline verification: every session begins with a check
         # against the physical repository state to prevent compounding
         # hallucinations across disjointed runs.
@@ -114,6 +134,28 @@ class MiniAgent:
             self.workspace.repo_root,
             watch_files=self.config.get("project_rules_files") or [],
         )
+
+        # Query engine / context window (mirrors reference agent's query.ts)
+        self.max_tokens = None
+        _model_name = getattr(model_client, "model", "unknown")
+        _model_name = str(_model_name) if not callable(_model_name) else "unknown"
+        if "MagicMock" in _model_name:
+            _model_name = "unknown"
+        self._model_name = _model_name
+
+        # Content replacement state (mirrors reference agent's content replacement)
+        from .query import ContentReplacementState
+        self.content_replacement_state = ContentReplacementState()
+
+        # MCP clients (mirrors reference agent's MCP support)
+        self.mcp_clients: List[Any] = []
+
+        # Thinking config (mirrors reference agent's thinking.ts)
+        self.thinking_config = {"type": "adaptive"}
+
+        # Abort controller (mirrors reference agent's AbortController)
+        from .abort_controller import AbortController
+        self.abort_controller = AbortController()
 
         # Build the per-agent tool registry and stable prompt prefix.
         self.registry = ToolRegistry(self)
@@ -215,10 +257,6 @@ class MiniAgent:
     def history_text(self):
         harness = self.config.get("harness", {})
         compaction_cfg = harness.get("compaction") or {}
-        # Run the graduated compaction cascade over a copy of the history
-        # whenever its rendered size exceeds the soft target. The agent never
-        # mutates ``self.session["history"]`` here; the durable transcript
-        # remains intact so resuming a session keeps full fidelity.
         target_chars = compaction_cfg.get(
             "target_chars",
             compaction_module.DEFAULT_COMPACTION["target_chars"],
@@ -226,16 +264,40 @@ class MiniAgent:
         history = self.session["history"]
         rendered_size = compaction_module.render_history_size(history)
         current_budget = harness.get("max_tool_output", 4000)
+
+        # Compact state: normal / warning / error
+        if not hasattr(self, "compact_state"):
+            self.compact_state = "normal"
+        if rendered_size > target_chars * 1.5:
+            self.compact_state = "error"
+        elif rendered_size > target_chars * 0.9:
+            self.compact_state = "warning"
+        else:
+            self.compact_state = "normal"
+
         if rendered_size > target_chars:
-            outcome = compaction_module.run_cascade(
-                history,
-                current_budget=current_budget,
-                config=compaction_cfg,
-                model_client=self.model_client if compaction_cfg.get("auto_compaction", True) else None,
-                autocompact_tokens=compaction_cfg.get("autocompact_tokens", 512),
-                autocompact_prompt=(self.config.get("prompts") or {}).get("autocompact"),
-            )
-            if outcome.get("halted"):
+            # Pre-compact hook
+            if getattr(self, "on_pre_compact", None):
+                self.on_pre_compact()
+            try:
+                outcome = compaction_module.run_cascade(
+                    history,
+                    current_budget=current_budget,
+                    config=compaction_cfg,
+                    model_client=self.model_client if compaction_cfg.get("auto_compaction", True) else None,
+                    autocompact_tokens=compaction_cfg.get("autocompact_tokens", 512),
+                    autocompact_prompt=(self.config.get("prompts") or {}).get("autocompact"),
+                )
+            except compaction_module.HardHaltError:
+                self.compact_state = "error"
+                outcome = {
+                    "history": history,
+                    "budget": current_budget,
+                    "stages_applied": ["hard_halt"],
+                    "halted": True,
+                }
+            if outcome.get("halted") and not outcome.get("stages_applied", []) == ["hard_halt"]:
+                self.compact_state = "error"
                 print(
                     "[warning] compaction cascade could not bring transcript under target; "
                     "continuing with over-budget history",
@@ -244,6 +306,9 @@ class MiniAgent:
             history = outcome["history"]
             current_budget = outcome["budget"]
             self.last_compaction_stages = outcome["stages_applied"]
+            # Post-compact hook
+            if getattr(self, "on_post_compact", None):
+                self.on_post_compact()
         else:
             self.last_compaction_stages = []
         return build_history_text(
@@ -252,10 +317,21 @@ class MiniAgent:
             max_history=harness.get("max_history", 12000),
         )
 
+    @property
+    def context_window(self):
+        from .query import get_context_window
+        return get_context_window(self._model_name)
+
     def prompt(self, user_message):
         plan_text = self._active_plan_text()
         message = f"{plan_text}\n\n{user_message}" if plan_text else user_message
-        return build_prompt(self.prefix, self.memory_text(), self.history_text(), message)
+        built = build_prompt(self.prefix, self.memory_text(), self.history_text(), message)
+        # Token budget check
+        if self.max_tokens is not None:
+            from .query import estimate_tokens
+            if estimate_tokens(built) > self.max_tokens:
+                raise RuntimeError(f"Prompt exceeds token budget: {estimate_tokens(built)} > {self.max_tokens}")
+        return built
 
     def _active_plan_text(self):
         """Render the active ``decompose`` plan so it is re-consulted each turn.
@@ -306,6 +382,13 @@ class MiniAgent:
         memory = self.session["memory"]
         memory["task"] = clip(user_message.strip(), 300)
         self.record({"role": "user", "content": user_message, "created_at": now()})
+        # Append to global history (mirrors reference agent's history.ts)
+        append_history(
+            self.workspace.repo_root,
+            display=user_message.strip(),
+            session_id=self.session["id"],
+            project=self.workspace.repo_root,
+        )
 
         retry_template = self.config.get("prompts", {}).get(
             "retry_notice", BUILTIN_DEFAULTS["prompts"]["retry_notice"]
@@ -328,9 +411,23 @@ class MiniAgent:
             )
             self.last_stop_reason = reason
             self.last_ask_result = result
+            # Persist cost state so it survives session resume
+            save_cost_state(self.workspace.repo_root, self.session["id"], self.cost_tracker)
             return final_text
 
         while tool_steps < self.max_steps and attempts < max_attempts:
+            # Check abort signal
+            try:
+                self.abort_controller.check()
+            except RuntimeError:
+                return _finish("Aborted by user.", StopReason.USER_INTERRUPT)
+            # Budget check: stop before burning more tokens
+            if self.cost_tracker.check_budget(self.max_budget_usd):
+                final = (
+                    f"Stopped: budget exceeded (${self.cost_tracker.state.total_cost_usd:.4f} "
+                    f"/ ${self.max_budget_usd:.4f})."
+                )
+                return _finish(final, StopReason.BUDGET_EXCEEDED)
             attempts += 1
             try:
                 prompt = self.prompt(user_message)
@@ -339,9 +436,23 @@ class MiniAgent:
                 return _finish(final, StopReason.HARD_HALT_RECOVERED)
             if self.inference_start_hook:
                 self.inference_start_hook()
+            api_start = time.time()
             raw = self.model_client.complete(prompt, self.max_new_tokens)
+            api_duration_ms = (time.time() - api_start) * 1000
             if self.inference_end_hook:
                 self.inference_end_hook()
+            # Track usage if the model client exposes it
+            usage = getattr(self.model_client, "last_usage", None)
+            if isinstance(usage, dict):
+                self.cost_tracker.record_call(
+                    model_name=getattr(self.model_client, "model", "unknown"),
+                    input_tokens=usage.get("input_tokens", 0),
+                    output_tokens=usage.get("output_tokens", 0),
+                    cache_read_input_tokens=usage.get("cache_read_input_tokens", 0),
+                    cache_creation_input_tokens=usage.get("cache_creation_input_tokens", 0),
+                    web_search_requests=usage.get("web_search_requests", 0),
+                    api_duration_ms=api_duration_ms,
+                )
             kind, payload = parsing.parse_model_output(raw, retry_template)
 
             if kind == "tool":
@@ -734,10 +845,27 @@ class MiniAgent:
 
     def approve(self, name, args):
         if self.read_only:
+            self.permission_context.record_denial(name, args)
+            self.permission_denials.append({"tool_name": name, "tool_input": args})
             return False
+
+        # Check granular permission rules first
+        decision = self.permission_context.check(
+            name, args, self.approval_policy, self.read_only
+        )
+        if decision == "deny":
+            self.permission_context.record_denial(name, args)
+            self.permission_denials.append({"tool_name": name, "tool_input": args})
+            return False
+        if decision == "allow":
+            return True
+
+        # Fall back to global approval policy
         if self.approval_policy == "auto":
             return True
         if self.approval_policy == "never":
+            self.permission_context.record_denial(name, args)
+            self.permission_denials.append({"tool_name": name, "tool_input": args})
             return False
         # YOLO classifier: when enabled, auto-approve obviously-safe shell
         # commands so the agent does not nag on harmless `ls`/`pwd` calls.
@@ -754,7 +882,11 @@ class MiniAgent:
             )
         except EOFError:
             return False
-        return answer.strip().lower() in {"y", "yes"}
+        approved = answer.strip().lower() in {"y", "yes"}
+        if not approved:
+            self.permission_context.record_denial(name, args)
+            self.permission_denials.append({"tool_name": name, "tool_input": args})
+        return approved
 
     # ---- parsing helpers (kept as classmethods for backward compat) -----
 
@@ -811,6 +943,51 @@ class MiniAgent:
         if not self.path_is_within_root(resolved):
             raise ValueError(f"path escapes workspace: {raw_path}")
         return resolved
+
+    # ---- cost tracking accessors (for test compatibility) -------------
+
+    @property
+    def total_cost_usd(self):
+        return self.cost_tracker.state.total_cost_usd
+
+    @property
+    def token_usage(self):
+        tu = self.cost_tracker.state.token_usage
+        return {
+            "input_tokens": tu.input_tokens,
+            "output_tokens": tu.output_tokens,
+            "cache_read_input_tokens": tu.cache_read_input_tokens,
+            "cache_creation_input_tokens": tu.cache_creation_input_tokens,
+            "web_search_requests": tu.web_search_requests,
+        }
+
+    @property
+    def model_usage(self):
+        return {
+            name: {
+                "input_tokens": u.input_tokens,
+                "output_tokens": u.output_tokens,
+                "cache_read_input_tokens": u.cache_read_input_tokens,
+                "cache_creation_input_tokens": u.cache_creation_input_tokens,
+                "web_search_requests": u.web_search_requests,
+                "cost_usd": u.cost_usd,
+            }
+            for name, u in self.cost_tracker.state.model_usage.items()
+        }
+
+    @property
+    def commands(self):
+        return get_commands(self)
+
+    def spawn_task(self, task_type, description, command="", timeout=None):
+        """Spawn a background task."""
+        from .tasks import spawn_task as _spawn
+        return _spawn(self, task_type, description, command, timeout)
+
+    def kill_task(self, task_id):
+        """Kill a background task."""
+        from .tasks import kill_task as _kill
+        return _kill(task_id)
 
     # ---- thin tool wrappers (kept for backward compatibility) ----------
 

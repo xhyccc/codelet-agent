@@ -1,4 +1,4 @@
-# Default configuration for Mini-Coding-Agent.
+# Default configuration for Codelet.
 #
 # This file is the single source of truth for all prompts and harness
 # settings. You can override any subset of it by passing
@@ -27,7 +27,7 @@
 prompts:
   # Layer 2: agent identity. Kept terse so it is always at the top.
   agent_identity: |
-    You are Mini-Coding-Agent, a small, careful coding agent. You operate inside
+    You are Codelet, a small, careful coding agent derived from Mini-Coding-Agent. You operate inside
     a real user workspace and complete tasks by calling structured tools. You
     plan briefly, take small steps, and prefer reading before writing.
 

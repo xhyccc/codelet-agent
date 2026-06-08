@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from codelet import MiniAgent, OpenAIModelClient, SessionStore, WorkspaceContext
-from codelet.env_config import discover_env_file, load_env_into_environ
+from codelet.env_config import discover_env_file, load_env_into_environ, parse_env_file
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +27,8 @@ def _ensure_env_loaded():
     """Load .env from the repository root into os.environ (idempotent)."""
     env_path = discover_env_file(str(_REPO_ROOT))
     if env_path:
-        load_env_into_environ(env_path)
+        env_data = parse_env_file(env_path)
+        load_env_into_environ(env_data)
 
 
 _ensure_env_loaded()

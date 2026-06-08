@@ -44,6 +44,7 @@ class Skill:
     when_to_use: str = ""
     argument_hint: str = ""
     allowed_tools: List[str] = field(default_factory=list)
+    effort: str = "medium"  # low | medium | high
 
     def manifest(self) -> str:
         """One-line ``- name: description`` for the prompt prefix.
@@ -101,6 +102,7 @@ def _parse_skill_file(skill_dir: Path) -> Optional[Skill]:
     when_to_use = fm.get("when_to_use") or fm.get("whenToUse") or ""
     argument_hint = fm.get("argument_hint") or fm.get("argumentHint") or ""
     allowed_tools = _split_list(fm.get("allowed_tools") or fm.get("allowedTools"))
+    effort = fm.get("effort") or "medium"
     # Asset list: every sibling file under the skill dir except SKILL.md.
     assets = sorted(
         str(p.relative_to(skill_dir))
@@ -116,6 +118,7 @@ def _parse_skill_file(skill_dir: Path) -> Optional[Skill]:
         when_to_use=when_to_use,
         argument_hint=argument_hint,
         allowed_tools=allowed_tools,
+        effort=effort,
     )
 
 
@@ -173,3 +176,28 @@ def load_skill_body(skills: List[Skill], name: str) -> str:
                     parts.append(f"- {asset}")
             return "\n".join(parts)
     return f"error: skill '{name}' not found"
+
+
+def load_skill_body_with_args(skills: List[Skill], name: str, args: Dict[str, str]) -> str:
+    """Return skill body with {{key}} substitution."""
+    body = load_skill_body(skills, name)
+    if body.startswith("error:"):
+        return body
+    for key, value in args.items():
+        body = body.replace(f"{{{{{key}}}}}", str(value))
+    return body
+
+
+def get_skill_commands(skills: List[Skill]) -> List[dict]:
+    """Return slash commands derived from skills.
+
+    Each skill with an ``argument_hint`` can expose a /{skill-name} command.
+    """
+    commands = []
+    for s in skills:
+        commands.append({
+            "name": s.name,
+            "description": s.description,
+            "effort": s.effort,
+        })
+    return commands

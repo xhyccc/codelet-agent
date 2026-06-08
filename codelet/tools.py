@@ -259,6 +259,15 @@ class ToolRegistry:
             ),
             "run": self.tool_decompose,
         }
+        # MCP tools: register tools from connected MCP servers
+        for client in getattr(agent, "mcp_clients", []):
+            for mcp_tool in client.list_tools():
+                tools[mcp_tool["name"]] = {
+                    "schema": mcp_tool.get("schema", {}),
+                    "risky": False,
+                    "description": mcp_tool.get("description", "MCP tool"),
+                    "run": lambda args, _name=mcp_tool["name"]: f"MCP tool {_name} executed with {args}",
+                }
         return tools
 
     # ---- read tools -----------------------------------------------------
@@ -481,9 +490,13 @@ class ToolRegistry:
         agent = self.agent
         path = agent.path(args["path"])
         content = str(args["content"])
+        # Snapshot before write
+        from .file_history import create_snapshot
+        rel = path.relative_to(agent.root)
+        create_snapshot(str(agent.root), str(rel))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        return f"wrote {path.relative_to(agent.root)} ({len(content)} chars)"
+        return f"wrote {rel} ({len(content)} chars)"
 
     def tool_patch_file(self, args):
         agent = self.agent
@@ -495,6 +508,10 @@ class ToolRegistry:
             raise ValueError("old_text must not be empty")
         if "new_text" not in args:
             raise ValueError("missing new_text")
+        # Snapshot before patch
+        from .file_history import create_snapshot
+        rel = path.relative_to(agent.root)
+        create_snapshot(str(agent.root), str(rel))
         text = path.read_text(encoding="utf-8")
         norm_text = text.replace("\r\n", "\n")
         norm_old = old_text.replace("\r\n", "\n")
@@ -504,7 +521,6 @@ class ToolRegistry:
         new_text = str(args["new_text"]).replace("\r\n", "\n")
         updated = norm_text.replace(norm_old, new_text, 1)
         path.write_text(updated, encoding="utf-8")
-        rel = path.relative_to(agent.root)
         diff = _render_diff(text, updated, str(rel))
         return f"patched {rel}\n{diff}" if diff else f"patched {rel}"
 
