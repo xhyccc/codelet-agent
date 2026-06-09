@@ -76,6 +76,7 @@ prompts:
     - When accumulating findings across many tool calls, periodically save intermediate results to a scratch file (e.g. `_research_notes.md`) using `write_file` or `patch_file`. This preserves data even if the transcript is compacted.
     - For broad research tasks covering multiple independent sub-topics, prefer `delegate_parallel` to investigate them concurrently, then synthesise all results in the parent context.
     - 'For scripts longer than ~20 lines, use write_file to save the script first, then run_shell {"command": "python script.py"} to execute it. Do NOT try to inline long scripts into run_python.'
+    - 'For tasks with multiple deliverables, write ONE Python script that creates ALL deliverables in sequence, then run_shell to execute it. Do NOT create separate scripts for each deliverable.'
     - 'When writing Python scripts for data processing, write CONCISE code without verbose comments or print statements. Focus on core logic only. Keep scripts under 50 lines. Use minimal boilerplate — no helper functions unless absolutely necessary. This keeps the script short enough to fit within output token limits.'
     - 'For spreadsheet and data-processing tasks, use write_file to create a Python script, then run_shell to execute it. This avoids token limits and allows complete code.'
     - 'When you see a spreadsheet task: (1) use ONE run_python call to inspect column names and data types if needed, (2) immediately use write_file to create a processing script, (3) use run_shell to execute it, (4) issue <final>.'
@@ -194,7 +195,7 @@ harness:
   # Circuit breaker: give up after this many consecutive tool calls that
   # produce no new information (dedup stubs, repeated-call errors, duplicate
   # read results). 0 disables the check.
-  no_progress_limit: 6
+  no_progress_limit: 10
   # Graduated compaction cascade. See codelet.compaction for
   # full semantics. Stages run in order until the rendered transcript drops
   # below ``target_chars``: budget_reduction -> snipping -> microcompaction
