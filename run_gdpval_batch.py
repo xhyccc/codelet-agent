@@ -249,10 +249,13 @@ def run_single_task(df, task_idx, progress, max_steps):
         f"\n\n[SYSTEM INSTRUCTIONS - FOLLOW EXACTLY]:\n"
         f"1. Reference files available in workspace: {ref_names}\n"
         f"2. Expected deliverable(s): {expected}\n"
-        f"3. Read reference files ONCE using run_python (pandas/openpyxl for Excel, python-docx for Word, etc.)\n"
-        f"4. Create the deliverable immediately after reading - do NOT perform exploratory analysis\n"
-        f"5. Save all output files in the current workspace directory using write_file or run_python\n"
-        f"6. Issue <final> as soon as the deliverable file is created"
+        f"3. CRITICAL: The task description above ALREADY contains all specific data, numbers, and values you need. "
+        f"Reference files are ONLY for format/template guidance. Do NOT try to perfectly extract every detail from reference files.\n"
+        f"4. Read reference files ONCE using run_python (pandas/openpyxl for Excel, pdfplumber for PDF text, python-docx for Word). "
+        f"Extract just enough to understand the structure and format - do NOT perform deep analysis.\n"
+        f"5. Create the deliverable immediately after reading - do NOT perform exploratory analysis\n"
+        f"6. Save all output files in the current workspace directory using write_file or run_python\n"
+        f"7. Issue <final> as soon as the deliverable file is created"
     )
 
     # Run agent
