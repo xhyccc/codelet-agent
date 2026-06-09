@@ -165,8 +165,8 @@ def collect_deliverables(workspace: Path, task_row, task_idx):
     """Collect deliverable files the agent created in the workspace.
 
     Only counts files that match expected deliverable types (PDF, Excel, Word,
-    PowerPoint, images, audio, video). Intermediate scripts (.py, .sh, .json,
-    .txt, .md) are NOT counted as deliverables.
+    PowerPoint, images, audio, video, text). Intermediate scripts (.py, .sh, .json,
+    .md) are NOT counted as deliverables.
 
     Returns a list of relative paths (from workspace root) of created files.
     """
@@ -182,7 +182,7 @@ def collect_deliverables(workspace: Path, task_row, task_idx):
         ".pdf", ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
         ".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp",
         ".wav", ".mp3", ".mp4", ".avi", ".mov", ".mkv",
-        ".csv", ".html", ".zip",
+        ".csv", ".html", ".zip", ".txt",
     }
     # Intermediate / non-deliverable extensions
     non_deliverable_extensions = {
