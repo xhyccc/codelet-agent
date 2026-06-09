@@ -76,7 +76,7 @@ prompts:
     - When accumulating findings across many tool calls, periodically save intermediate results to a scratch file (e.g. `_research_notes.md`) using `write_file` or `patch_file`. This preserves data even if the transcript is compacted.
     - For broad research tasks covering multiple independent sub-topics, prefer `delegate_parallel` to investigate them concurrently, then synthesise all results in the parent context.
     - 'For scripts longer than ~20 lines, use write_file to save the script first, then run_shell {"command": "python script.py"} to execute it. Do NOT try to inline long scripts into run_python.'
-    - 'When writing Python scripts for data processing, write CONCISE code without verbose comments or print statements. Focus on core logic only. This keeps the script short enough to fit within output token limits.'
+    - 'When writing Python scripts for data processing, write CONCISE code without verbose comments or print statements. Focus on core logic only. Keep scripts under 100 lines. This keeps the script short enough to fit within output token limits.'
     - 'For spreadsheet and data-processing tasks, use write_file to create a Python script, then run_shell to execute it. This avoids token limits and allows complete code.'
     - 'When you see a spreadsheet task: (1) use ONE run_python call to inspect column names and data types if needed, (2) immediately use write_file to create a processing script, (3) use run_shell to execute it, (4) issue <final>.'
     - 'CRITICAL: After using write_file to create a Python script, you MUST use run_shell to execute it in your NEXT step. Do NOT issue <final> before running the script. The deliverable is only created when the script runs.'
@@ -201,15 +201,15 @@ harness:
   # raised if auto-compaction fails to free at least ``thrash_min_relief``
   # of the transcript to prevent continuous token thrashing.
   compaction:
-    target_chars: 12000
+    target_chars: 24000
     min_tool_output: 400
     microcompact_clip: 120
-    preserve_recent: 4
+    preserve_recent: 16
     thrash_min_relief: 0.1
     mcp_tools: [delegate]
     fileread_tools: [read_file]
     auto_compaction: true
-    autocompact_tokens: 8192
+    autocompact_tokens: 12000
 
 # Workspace files that should be auto-loaded into the <project-rules> layer.
 project_rules_files:
