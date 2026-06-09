@@ -333,11 +333,11 @@ class MiniAgent:
             remaining = max(0, max_step - current_step)
             step_info = f"\n\n[STEP COUNTER] You have used {current_step} of {max_step} steps. {remaining} steps remaining."
             if current_step >= 2 and remaining > 3:
-                step_info += " IMPORTANT: You should have started creating the deliverable by now. Stop inspecting and START CREATING. Use run_python to create the output file directly."
+                step_info += " IMPORTANT: You should have started creating the deliverable by now. Stop inspecting and START CREATING. Use write_file + run_shell to create the output."
             if remaining <= 3:
                 step_info += " CRITICAL: You are running out of steps. Issue your final answer or create the deliverable NOW."
-            if current_step >= 4 and remaining > 2:
-                step_info += " WARNING: You have spent too many steps on exploration. If you have not started creating, do so immediately with run_python. Do NOT write intermediate scripts."
+            if current_step >= 3 and remaining > 2:
+                step_info += " WARNING: You have spent too many steps on exploration. If you have not started creating, do so immediately with write_file then run_shell. Do NOT write intermediate scripts or make more inspection calls."
         built = build_prompt(self.prefix, self.memory_text(), self.history_text(), message + step_info)
         # Token budget check
         if self.max_tokens is not None:
@@ -541,9 +541,20 @@ class MiniAgent:
                 # model keeps issuing read-only calls that surface no new
                 # information (dedup stubs, repeated-call errors, duplicate
                 # results), stop instead of burning the whole step budget.
-                if no_progress_limit and self._no_progress_streak() >= no_progress_limit:
+                _np_streak = self._no_progress_streak()
+                # DEBUG
+                debug_log2 = Path(self.workspace.cwd) / "_agent_raw.log"
+                try:
+                    with open(debug_log2, "a", encoding="utf-8") as f:
+                        f.write(f"[DEBUG] no_progress check: streak={_np_streak}, limit={no_progress_limit}, will_trigger={no_progress_limit and _np_streak >= no_progress_limit}\n")
+                except Exception:
+                    pass
+                if no_progress_limit and _np_streak >= no_progress_limit:
+                    # For no-progress loops, don't recover run_python inspection calls
+                    # as "successful actions" — they didn't create deliverables.
+                    _inspection_tools = {"glob", "list_files", "read_file", "search", "run_python"}
                     recovered = self._last_successful_action_result(
-                        exclude={"glob", "list_files", "read_file", "search"}
+                        exclude=_inspection_tools
                     )
                     if recovered:
                         return _finish(recovered, StopReason.NO_PROGRESS_GIVEUP)
