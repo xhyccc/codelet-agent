@@ -36,7 +36,7 @@ PROGRESS_PATH = RESULTS_DIR / "progress.json"
 # Defaults
 # ---------------------------------------------------------------------------
 DEFAULT_MAX_STEPS = 10
-DEFAULT_TIMEOUT = 180  # seconds per task (3 min - enough for read + create + API latency)
+DEFAULT_TIMEOUT = 1800  # seconds per task (30 min - enough for complex tasks with many API calls)
 
 
 def load_tasks():
@@ -110,7 +110,8 @@ def run_codelet(workspace: Path, prompt: str, max_steps: int = DEFAULT_MAX_STEPS
         "--machine",
         "--approval", "auto",
         "--max-steps", str(max_steps),
-        "--max-new-tokens", "2048",
+        "--max-new-tokens", "16384",
+        "--openai-timeout", "300",
         "--no-welcome",
         prompt,
     ]

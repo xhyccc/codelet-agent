@@ -325,7 +325,20 @@ class MiniAgent:
     def prompt(self, user_message):
         plan_text = self._active_plan_text()
         message = f"{plan_text}\n\n{user_message}" if plan_text else user_message
-        built = build_prompt(self.prefix, self.memory_text(), self.history_text(), message)
+        # Inject step counter to remind the agent of its budget
+        step_info = ""
+        current_step = getattr(self, "_current_tool_step", 0)
+        max_step = getattr(self, "_max_tool_step", self.max_steps)
+        if current_step > 0:
+            remaining = max(0, max_step - current_step)
+            step_info = f"\n\n[STEP COUNTER] You have used {current_step} of {max_step} steps. {remaining} steps remaining."
+            if current_step >= 2 and remaining > 3:
+                step_info += " IMPORTANT: You should have started creating the deliverable by now. Stop inspecting and START CREATING. Use run_python to create the output file directly."
+            if remaining <= 3:
+                step_info += " CRITICAL: You are running out of steps. Issue your final answer or create the deliverable NOW."
+            if current_step >= 4 and remaining > 2:
+                step_info += " WARNING: You have spent too many steps on exploration. If you have not started creating, do so immediately with run_python. Do NOT write intermediate scripts."
+        built = build_prompt(self.prefix, self.memory_text(), self.history_text(), message + step_info)
         # Token budget check
         if self.max_tokens is not None:
             from .query import estimate_tokens
@@ -399,6 +412,8 @@ class MiniAgent:
         tool_steps = 0
         attempts = 0
         max_attempts = max(self.max_steps * 3, self.max_steps + 4)
+        self._current_tool_step = 0
+        self._max_tool_step = self.max_steps
 
         def _finish(final_text, reason):
             self.record({"role": "assistant", "content": final_text, "created_at": now()})
@@ -453,6 +468,22 @@ class MiniAgent:
                     web_search_requests=usage.get("web_search_requests", 0),
                     api_duration_ms=api_duration_ms,
                 )
+            # Log raw model output for debugging
+            debug_log = Path(self.workspace.cwd) / "_agent_raw.log"
+            try:
+                with open(debug_log, "a", encoding="utf-8") as f:
+                    f.write(f"\n\n=== STEP {tool_steps + 1} ===\n")
+                    f.write(f"RAW:\n{raw}\n")
+                    f.write(f"PARSED: {kind}\n")
+                    if kind == "tool":
+                        f.write(f"PAYLOAD: {json.dumps(payload)}\n")
+                    elif kind == "final":
+                        f.write(f"FINAL: {str(payload)[:500]}\n")
+                    elif kind == "retry":
+                        f.write(f"RETRY: {str(payload)}\n")
+            except Exception:
+                pass
+
             kind, payload = parsing.parse_model_output(raw, retry_template)
 
             if kind == "tool":
@@ -471,6 +502,7 @@ class MiniAgent:
                 result = ""
                 for name, args, result in batch_results:
                     tool_steps += 1
+                    self._current_tool_step = tool_steps
                     if self.tool_output_callback is not None:
                         self.tool_output_callback(name, args, result)
                     self.record(
@@ -620,6 +652,10 @@ class MiniAgent:
         the reference agent's diminishing-returns detector: it stops loops
         where the model keeps inspecting without producing new information,
         which the plain error-streak counter would miss.
+
+        ADDED: Also detects run_python inspection loops. If the agent makes
+        3+ run_python calls that only read/inspect without writing output
+        within the last 8 tool calls, the loop is considered stuck.
         """
         tool_events = [
             item for item in self.session["history"] if item.get("role") == "tool"
@@ -628,6 +664,21 @@ class MiniAgent:
             return 0
         contents = [str(item.get("content", "")) for item in tool_events]
 
+        def is_run_python_inspection(i):
+            """Check if tool event i is a run_python call that doesn't write output."""
+            name = tool_events[i].get("name", "")
+            if name != "run_python":
+                return False
+            code = str(tool_events[i].get("args", {}).get("code", ""))
+            has_write = any(
+                kw in code
+                for kw in [
+                    "to_excel", "to_csv", "write(", "save(", "dump(", 
+                    "Workbook(", "write_file", "patch_file"
+                ]
+            )
+            return not has_write
+
         def non_informative(i):
             content = contents[i]
             if content.startswith("[file unchanged"):
@@ -635,6 +686,11 @@ class MiniAgent:
             if content.lstrip().startswith("error: repeated identical tool call"):
                 return True
             name = tool_events[i].get("name", "")
+            # Intermediate Python scripts are non-progress — they don't create deliverables
+            if name == "write_file":
+                path = str(tool_events[i].get("args", {}).get("path", ""))
+                if path.endswith(".py"):
+                    return True
             if is_concurrency_safe(name):
                 for j in range(i):
                     if contents[j] == content and is_concurrency_safe(
@@ -643,12 +699,26 @@ class MiniAgent:
                         return True
             return False
 
+        # Classic trailing streak
         streak = 0
         for i in range(len(tool_events) - 1, -1, -1):
             if non_informative(i):
                 streak += 1
             else:
                 break
+
+        # NEW: Run-python inspection loop detector
+        # Count run_python inspection calls in the last 8 tool events.
+        # If 4+ are inspection-only, force a high streak to trigger the breaker.
+        recent_window = min(8, len(tool_events))
+        inspection_count = sum(
+            1 for j in range(len(tool_events) - recent_window, len(tool_events))
+            if is_run_python_inspection(j)
+        )
+        if inspection_count >= 4:
+            # Force the streak to exceed the limit so the breaker trips
+            return max(streak, 999)
+
         return streak
 
     # ---- compaction helpers --------------------------------------------

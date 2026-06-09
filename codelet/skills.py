@@ -123,17 +123,32 @@ def _parse_skill_file(skill_dir: Path) -> Optional[Skill]:
 
 
 def discover_skills(repo_root) -> List[Skill]:
-    """Scan ``<repo>/.codelet/skills/*/SKILL.md``."""
-    base = Path(repo_root) / SKILL_DIR_NAME
-    if not base.is_dir():
-        return []
+    """Scan ``<repo>/.codelet/skills/*/SKILL.md`` and ``~/.claude/skills/*/SKILL.md``."""
     skills: List[Skill] = []
-    for child in sorted(base.iterdir()):
-        if not child.is_dir():
-            continue
-        skill = _parse_skill_file(child)
-        if skill is not None:
-            skills.append(skill)
+    seen_names: set = set()
+
+    # 1. Repo-local skills (higher priority — can shadow global skills)
+    base = Path(repo_root) / SKILL_DIR_NAME
+    if base.is_dir():
+        for child in sorted(base.iterdir()):
+            if not child.is_dir():
+                continue
+            skill = _parse_skill_file(child)
+            if skill is not None:
+                skills.append(skill)
+                seen_names.add(skill.name)
+
+    # 2. Global skills from ~/.claude/skills/ (lower priority — only added if name not already present)
+    global_base = Path.home() / ".claude" / "skills"
+    if global_base.is_dir():
+        for child in sorted(global_base.iterdir()):
+            if not child.is_dir():
+                continue
+            skill = _parse_skill_file(child)
+            if skill is not None and skill.name not in seen_names:
+                skills.append(skill)
+                seen_names.add(skill.name)
+
     return skills
 
 
