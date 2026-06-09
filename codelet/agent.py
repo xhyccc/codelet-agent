@@ -558,6 +558,31 @@ class MiniAgent:
                     )
                     if recovered:
                         return _finish(recovered, StopReason.NO_PROGRESS_GIVEUP)
+                    
+                    # NEW: Auto-rescue — if the agent wrote a .py script but never ran it,
+                    # execute it automatically instead of giving up.
+                    _auto_rescue_script = self._find_unexecuted_python_script()
+                    if _auto_rescue_script:
+                        rescue_result = self._execute_tool_batch([
+                            {"name": "run_shell", "args": {"command": f"python3 {_auto_rescue_script}", "timeout": 120}}
+                        ])
+                        if rescue_result:
+                            name, args, result = rescue_result[0]
+                            self.record({
+                                "role": "tool",
+                                "name": name,
+                                "args": args,
+                                "content": result,
+                                "created_at": now(),
+                            })
+                            self.note_tool(name, args, result)
+                            # After auto-rescue, try to recover again
+                            recovered2 = self._last_successful_action_result(
+                                exclude=_inspection_tools
+                            )
+                            if recovered2:
+                                return _finish(recovered2, StopReason.NO_PROGRESS_GIVEUP)
+                    
                     final = (
                         f"Stopped after {no_progress_limit} consecutive tool "
                         "calls that produced no new information. The task may "
@@ -740,6 +765,41 @@ class MiniAgent:
             return max(streak, 999)
 
         return streak
+
+    def _find_unexecuted_python_script(self):
+        """Find a .py file in the workspace that was written but never executed.
+
+        Returns the relative path of the script, or None if none found.
+        """
+        # Find all write_file calls that created .py files
+        written_scripts = set()
+        executed_scripts = set()
+        for item in self.session["history"]:
+            if item.get("role") != "tool":
+                continue
+            name = item.get("name", "")
+            args = item.get("args", {})
+            if name == "write_file":
+                path = str(args.get("path", ""))
+                if path.endswith(".py"):
+                    written_scripts.add(Path(path).name)
+            elif name == "run_shell":
+                cmd = str(args.get("command", ""))
+                # Extract script name from commands like "python script.py" or "python3 script.py"
+                for prefix in ["python ", "python3 ", "python2 "]:
+                    if prefix in cmd:
+                        parts = cmd.split(prefix)
+                        for part in parts[1:]:
+                            token = part.strip().split()[0] if part.strip() else ""
+                            if token.endswith(".py"):
+                                executed_scripts.add(Path(token).name)
+        # Find unexecuted scripts that still exist in the workspace
+        for script_name in written_scripts:
+            if script_name not in executed_scripts:
+                script_path = Path(self.workspace.cwd) / script_name
+                if script_path.exists():
+                    return str(script_path.relative_to(self.workspace.cwd))
+        return None
 
     # ---- compaction helpers --------------------------------------------
 
