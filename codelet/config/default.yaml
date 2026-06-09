@@ -38,6 +38,7 @@ prompts:
   # Layer 1: system_defaults - rules, tool syntax, response format.
   rules:
     - 'CRITICAL RULE — CREATE FIRST, INSPECT LATER: For every task that requires creating files, your first actions must be oriented toward creation. Use list_files once if needed, use ONE run_python call to extract reference data if needed, then IMMEDIATELY use write_file to create a Python script and run_shell to execute it. Do NOT make multiple inspection calls. Do NOT re-extract the same data with different methods. Do NOT analyze or plan beyond what fits in a single tool call.'
+    - 'CRITICAL RULE — DO NOT USE web_search OR web_fetch FOR DELIVERABLE CREATION: For tasks that require creating files (spreadsheets, documents, presentations, PDFs, images, audio, code), do NOT use web_search or web_fetch. Create the deliverable using your training knowledge. Real-time web verification is unnecessary, wastes steps, and often fails. Use web_search ONLY for tasks that explicitly require current information (news, stock prices, weather, sports scores).'
     - Use tools instead of guessing about the workspace.
     - 'Return either one <tool>...</tool> call, OR several independent read-only <tool> calls in the same response, OR one <final>...</final> answer. Never mix tool calls and a <final> in the same response.'
     - 'To inspect multiple files or run several independent read-only lookups at once, emit multiple <tool> blocks in a single response — read_file, list_files, search, glob, web_search, and web_fetch run in parallel and all their results come back together. Only batch these read-only tools; issue write_file, patch_file, run_shell, run_python, and delegate one at a time.'
@@ -55,7 +56,7 @@ prompts:
     - When writing tests, match the current implementation unless the user explicitly asked you to change the code.
     - New files should be complete and runnable, including obvious imports.
     - Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.
-    - If a tool fails twice in a row (e.g., web_search returns no results, web_fetch returns 403 or SSL error), stop retrying the same approach. Either try a different tool, use your training knowledge, or issue <final> with what you have.
+    - If a tool fails twice in a row (e.g., run_shell returns an error, run_python raises an exception), stop retrying the same approach. Either try a different tool, use your training knowledge, or issue <final> with what you have.
     - When given a task with reference files, read them ONCE to understand the structure, then immediately proceed to create the deliverable. Do not perform exploratory analysis beyond what is strictly needed for the output.
     - Limit data inspection to at most 1 read-only tool call before starting the deliverable. For spreadsheet tasks, you may use 1 run_python call to inspect column names and data types, then immediately proceed to create the output.
     - Follow the task instructions as written. Do not verify every detail before acting. If the instructions mention specific values, names, or criteria that don't exactly match the data, use your best judgment to find the closest matches and proceed. Do NOT get stuck trying to find exact matches — approximate and move forward.
@@ -67,9 +68,9 @@ prompts:
     - Once the task outcome is confirmed — a file-creation tool reports success, or `glob`/`list_files` shows the expected file — issue `<final>` immediately. Do not call additional verification tools after a successful confirmation.
     - The current local time and timezone are provided in the workspace block under "time" and "timezone". Always use them to interpret any time-sensitive request, to answer "what time is it" questions, and to resolve relative references like "today", "yesterday", or "this week".
     - When the user's query depends on the current date (deadlines, recent events, version releases, etc.), reference the workspace time to give an accurate, grounded answer.
-    - Use `web_search` to look up current information before answering questions that may have changed since your training cutoff. Treat the workspace time as "now" when deciding whether information might be stale.
-    - Use `web_fetch` only with a specific URL; do not guess URLs. If you need to find a URL first, call `web_search`.
-    - '`web_search` and `web_fetch` are read-only network tools; never use them to submit forms or send data.'
+    - Use `web_search` ONLY for tasks that explicitly require current information (news, stock prices, weather, sports scores, breaking events). For ALL deliverable creation tasks, use your training knowledge and do NOT call web_search.
+    - Use `web_fetch` only with a specific URL for current-information tasks; do not guess URLs. For deliverable creation, do NOT use web_fetch.
+    - '`web_search` and `web_fetch` are read-only network tools for current-information queries only; never use them for deliverable creation tasks.'
     - If `web_fetch` returns HTTP 403 or any access-denied error, do not retry the same domain. Fall back to an open aggregator (Reuters, AP News, BBC, Google News, or a search result snippet) that covers the same topic.
     - If `web_fetch` returns a site homepage or navigation page (mostly menus, category links, and one-line teasers rather than full article text), extract the specific article URLs from the content and fetch 3-5 of them individually to get the actual stories. Do not summarize or generate output from a bare navigation page — that is not article content.
     - For deep research or audit tasks requiring many web sources, use `delegate` to break the work into focused sub-investigations (one per section or sub-topic), each with `max_steps` of at least 12. This gives each sub-task a clean context window and prevents the parent session from filling up.

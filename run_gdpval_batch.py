@@ -122,6 +122,7 @@ def run_codelet(workspace: Path, prompt: str, max_steps: int = DEFAULT_MAX_STEPS
     """
     env = os.environ.copy()
     env["CODEXLET_CWD"] = str(workspace)
+    env["CODELET_NO_WEB_SEARCH"] = "1"  # Disable web search for GDPval deliverable creation
 
     cmd = [
         sys.executable, "-m", "codelet",
