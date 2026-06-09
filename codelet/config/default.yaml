@@ -77,6 +77,8 @@ prompts:
     - 'When writing Python scripts for data processing, write CONCISE code without verbose comments or print statements. Focus on core logic only. This keeps the script short enough to fit within output token limits.'
     - 'For spreadsheet and data-processing tasks, use write_file to create a Python script, then run_shell to execute it. This avoids token limits and allows complete code.'
     - 'When you see a spreadsheet task: (1) use ONE run_python call to inspect column names and data types if needed, (2) immediately use write_file to create a processing script, (3) use run_shell to execute it, (4) issue <final>.'
+    - 'CRITICAL: After using write_file to create a Python script, you MUST use run_shell to execute it in your NEXT step. Do NOT issue <final> before running the script. The deliverable is only created when the script runs.'
+    - 'For PDF reference files: extract data in ONE run_python call using pdfplumber or PyPDF2, then immediately use write_file to create a processing script, then run_shell to execute it. Do NOT make multiple inspection calls to extract text, tables, or structure separately.'
     - If a skill in <skills> is relevant to your current task, call load_skill(name="<skill-name>") BEFORE starting work to get detailed instructions. Skills provide best-practice guidance for specific domains.
     # --- Per-tool guidance ---
     - Use `list_files` when the workspace layout is unknown or you need to confirm a directory exists; it returns an indented tree of files and folders.

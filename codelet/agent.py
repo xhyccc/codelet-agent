@@ -674,7 +674,9 @@ class MiniAgent:
                 kw in code
                 for kw in [
                     "to_excel", "to_csv", "write(", "save(", "dump(", 
-                    "Workbook(", "write_file", "patch_file"
+                    "Workbook(", "write_file", "patch_file",
+                    "canvas.save", "pdf.save", "doc.save", "Document(",
+                    "to_pdf", "savefig", "plt.savefig"
                 ]
             )
             return not has_write
@@ -709,13 +711,20 @@ class MiniAgent:
 
         # NEW: Run-python inspection loop detector
         # Count run_python inspection calls in the last 8 tool events.
-        # If 4+ are inspection-only, force a high streak to trigger the breaker.
+        # If 3+ are inspection-only, force a high streak to trigger the breaker.
         recent_window = min(8, len(tool_events))
         inspection_count = sum(
             1 for j in range(len(tool_events) - recent_window, len(tool_events))
             if is_run_python_inspection(j)
         )
-        if inspection_count >= 4:
+        # DEBUG: log inspection detection
+        debug_log = Path(self.workspace.cwd) / "_agent_raw.log"
+        try:
+            with open(debug_log, "a", encoding="utf-8") as f:
+                f.write(f"\n[DEBUG] _no_progress_streak: tool_events={len(tool_events)}, recent_window={recent_window}, inspection_count={inspection_count}, streak={streak}, will_return={max(streak, 999) if inspection_count >= 3 else streak}\n")
+        except Exception:
+            pass
+        if inspection_count >= 3:
             # Force the streak to exceed the limit so the breaker trips
             return max(streak, 999)
 

@@ -241,12 +241,13 @@ def run_single_task(df, task_idx, progress, max_steps):
     )
 
     # Update progress
-    if rc == 0 and deliverables:
+    if deliverables:
+        # Accept deliverables even if process timed out (rc=-1) or had non-zero exit
         print(f"  [OK] Completed in {elapsed:.1f}s. Deliverables: {deliverables}")
         progress["completed"].append(task_id)
     elif rc == 0:
         print(f"  [WARN] Completed in {elapsed:.1f}s but no deliverables found.")
-        progress["completed"].append(task_id)
+        progress["failed"].append(task_id)
     else:
         print(f"  [FAIL] Exit code {rc} after {elapsed:.1f}s.")
         progress["failed"].append(task_id)
