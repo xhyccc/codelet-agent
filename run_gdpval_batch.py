@@ -142,7 +142,11 @@ def run_codelet(workspace: Path, prompt: str, max_steps: int = DEFAULT_MAX_STEPS
 
 
 def collect_deliverables(workspace: Path, task_row, task_idx):
-    """Collect any files the agent created in the workspace.
+    """Collect deliverable files the agent created in the workspace.
+
+    Only counts files that match expected deliverable types (PDF, Excel, Word,
+    PowerPoint, images, audio, video). Intermediate scripts (.py, .sh, .json,
+    .txt, .md) are NOT counted as deliverables.
 
     Returns a list of relative paths (from workspace root) of created files.
     """
@@ -153,13 +157,31 @@ def collect_deliverables(workspace: Path, task_row, task_idx):
     # Names of files that were copied in as reference materials
     ref_names = {Path(p).name for p in ref_files}
 
+    # Expected deliverable extensions
+    deliverable_extensions = {
+        ".pdf", ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
+        ".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp",
+        ".wav", ".mp3", ".mp4", ".avi", ".mov", ".mkv",
+        ".csv", ".html", ".zip",
+    }
+    # Intermediate / non-deliverable extensions
+    non_deliverable_extensions = {
+        ".py", ".sh", ".bash", ".json", ".txt", ".md", ".log",
+        ".yml", ".yaml", ".xml", ".sql", ".js", ".ts", ".css",
+    }
+
     for path in workspace.rglob("*"):
         if path.is_file() and not path.name.startswith("_"):
             rel = path.relative_to(workspace)
-            # Skip reference files and metadata files
+            # Skip reference files
             if path.name in ref_names:
                 continue
-            deliverables.append(str(rel))
+            # Skip intermediate scripts
+            if path.suffix.lower() in non_deliverable_extensions:
+                continue
+            # Only count known deliverable types
+            if path.suffix.lower() in deliverable_extensions:
+                deliverables.append(str(rel))
 
     return deliverables
 

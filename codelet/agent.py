@@ -333,7 +333,7 @@ class MiniAgent:
             remaining = max(0, max_step - current_step)
             step_info = f"\n\n[STEP COUNTER] You have used {current_step} of {max_step} steps. {remaining} steps remaining."
             if current_step >= 2 and remaining > 3:
-                step_info += " IMPORTANT: You should have started creating the deliverable by now. Stop inspecting and START CREATING. Use write_file + run_shell to create the output."
+                step_info += " IMPORTANT: You should have started creating the deliverable by now. Stop inspecting and START CREATING. Use write_file + run_shell to create the output. You are FORBIDDEN from making any more read-only calls."
             if remaining <= 3:
                 step_info += " CRITICAL: You are running out of steps. Issue your final answer or create the deliverable NOW."
             if current_step >= 3 and remaining > 2:
@@ -675,22 +675,24 @@ class MiniAgent:
             return 0
         contents = [str(item.get("content", "")) for item in tool_events]
 
-        def is_run_python_inspection(i):
-            """Check if tool event i is a run_python call that doesn't write output."""
+        def is_inspection_call(i):
+            """Check if tool event i is any read-only call that doesn't create deliverables."""
             name = tool_events[i].get("name", "")
-            if name != "run_python":
-                return False
-            code = str(tool_events[i].get("args", {}).get("code", ""))
-            has_write = any(
-                kw in code
-                for kw in [
-                    "to_excel", "to_csv", "write(", "save(", "dump(", 
-                    "Workbook(", "write_file", "patch_file",
-                    "canvas.save", "pdf.save", "doc.save", "Document(",
-                    "to_pdf", "savefig", "plt.savefig"
-                ]
-            )
-            return not has_write
+            # run_python without write keywords
+            if name == "run_python":
+                code = str(tool_events[i].get("args", {}).get("code", ""))
+                has_write = any(
+                    kw in code
+                    for kw in [
+                        "to_excel", "to_csv", "write(", "save(", "dump(", 
+                        "Workbook(", "write_file", "patch_file",
+                        "canvas.save", "pdf.save", "doc.save", "Document(",
+                        "to_pdf", "savefig", "plt.savefig"
+                    ]
+                )
+                return not has_write
+            # All other read-only tools count as inspection
+            return name in {"list_files", "read_file", "glob", "search", "web_search", "web_fetch"}
 
         def non_informative(i):
             content = contents[i]
@@ -720,13 +722,11 @@ class MiniAgent:
             else:
                 break
 
-        # NEW: Run-python inspection loop detector
-        # Count run_python inspection calls in the last 8 tool events.
-        # If 3+ are inspection-only, force a high streak to trigger the breaker.
+        # NEW: Inspection loop detector — ANY 3+ consecutive read-only calls = stuck
         recent_window = min(8, len(tool_events))
         inspection_count = sum(
             1 for j in range(len(tool_events) - recent_window, len(tool_events))
-            if is_run_python_inspection(j)
+            if is_inspection_call(j)
         )
         # DEBUG: log inspection detection
         debug_log = Path(self.workspace.cwd) / "_agent_raw.log"
