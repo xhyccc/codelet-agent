@@ -747,7 +747,7 @@ class MiniAgent:
             else:
                 break
 
-        # NEW: Inspection loop detector — ANY 3+ consecutive read-only calls = stuck
+        # NEW: Inspection loop detector — ANY 5+ consecutive read-only calls = stuck
         recent_window = min(8, len(tool_events))
         inspection_count = sum(
             1 for j in range(len(tool_events) - recent_window, len(tool_events))
@@ -757,10 +757,10 @@ class MiniAgent:
         debug_log = Path(self.workspace.cwd) / "_agent_raw.log"
         try:
             with open(debug_log, "a", encoding="utf-8") as f:
-                f.write(f"\n[DEBUG] _no_progress_streak: tool_events={len(tool_events)}, recent_window={recent_window}, inspection_count={inspection_count}, streak={streak}, will_return={max(streak, 999) if inspection_count >= 3 else streak}\n")
+                f.write(f"\n[DEBUG] _no_progress_streak: tool_events={len(tool_events)}, recent_window={recent_window}, inspection_count={inspection_count}, streak={streak}, will_return={max(streak, 999) if inspection_count >= 5 else streak}\n")
         except Exception:
             pass
-        if inspection_count >= 3:
+        if inspection_count >= 5:
             # Force the streak to exceed the limit so the breaker trips
             return max(streak, 999)
 
