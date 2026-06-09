@@ -66,14 +66,33 @@ def setup_task_workspace(task_row, task_idx):
     """Create an isolated workspace for a single task.
 
     Copies reference files into the workspace so the agent can read them.
+    Cleans up any leftover files from previous runs.
     Returns the workspace path.
     """
     task_id = task_row["task_id"]
     workspace = RESULTS_DIR / "workspaces" / f"task_{task_idx:03d}_{task_id[:8]}"
     workspace.mkdir(parents=True, exist_ok=True)
 
+    # Get reference file names to preserve
+    ref_files = task_row["reference_files"]
+    if hasattr(ref_files, "tolist"):
+        ref_files = ref_files.tolist()
+    ref_names = {Path(p).name for p in ref_files}
+
+    # Clean up old files from previous runs (except reference files and debug files)
+    for item in workspace.iterdir():
+        if item.name in ref_names:
+            continue
+        if item.name.startswith("_") and item.suffix in {".json", ".txt", ".log"}:
+            # Keep debug files for analysis
+            continue
+        if item.is_file():
+            item.unlink()
+        elif item.is_dir():
+            shutil.rmtree(item)
+
     # Copy reference files into workspace
-    for ref_path in task_row["reference_files"]:
+    for ref_path in ref_files:
         src = DATASET_DIR / ref_path
         if src.exists():
             dst = workspace / Path(ref_path).name
@@ -85,7 +104,7 @@ def setup_task_workspace(task_row, task_idx):
         "task_index": task_idx,
         "sector": task_row["sector"],
         "occupation": task_row["occupation"],
-        "reference_files": task_row["reference_files"].tolist() if hasattr(task_row["reference_files"], "tolist") else list(task_row["reference_files"]),
+        "reference_files": ref_files,
         "deliverable_files": task_row["deliverable_files"].tolist() if hasattr(task_row["deliverable_files"], "tolist") else list(task_row["deliverable_files"]),
         "started_at": datetime.utcnow().isoformat() + "Z",
     }

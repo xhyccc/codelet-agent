@@ -550,17 +550,9 @@ class MiniAgent:
                 except Exception:
                     pass
                 if no_progress_limit and _np_streak >= no_progress_limit:
-                    # For no-progress loops, don't recover run_python inspection calls
-                    # as "successful actions" — they didn't create deliverables.
+                    # NEW: Auto-rescue FIRST — if the agent wrote a .py script but never ran it,
+                    # execute it automatically. This takes priority over recovering past results.
                     _inspection_tools = {"glob", "list_files", "read_file", "search", "run_python"}
-                    recovered = self._last_successful_action_result(
-                        exclude=_inspection_tools
-                    )
-                    if recovered:
-                        return _finish(recovered, StopReason.NO_PROGRESS_GIVEUP)
-                    
-                    # NEW: Auto-rescue — if the agent wrote a .py script but never ran it,
-                    # execute it automatically instead of giving up.
                     _auto_rescue_script = self._find_unexecuted_python_script()
                     if _auto_rescue_script:
                         rescue_result = self._execute_tool_batch([
@@ -576,12 +568,20 @@ class MiniAgent:
                                 "created_at": now(),
                             })
                             self.note_tool(name, args, result)
-                            # After auto-rescue, try to recover again
+                            # After auto-rescue, try to recover a successful result
                             recovered2 = self._last_successful_action_result(
                                 exclude=_inspection_tools
                             )
                             if recovered2:
                                 return _finish(recovered2, StopReason.NO_PROGRESS_GIVEUP)
+                    
+                    # For no-progress loops, don't recover run_python inspection calls
+                    # as "successful actions" — they didn't create deliverables.
+                    recovered = self._last_successful_action_result(
+                        exclude=_inspection_tools
+                    )
+                    if recovered:
+                        return _finish(recovered, StopReason.NO_PROGRESS_GIVEUP)
                     
                     final = (
                         f"Stopped after {no_progress_limit} consecutive tool "
@@ -771,19 +771,21 @@ class MiniAgent:
 
         Returns the relative path of the script, or None if none found.
         """
-        # Find all write_file calls that created .py files
-        written_scripts = set()
+        # First: scan filesystem for all .py files in workspace
+        workspace_path = Path(self.workspace.cwd)
+        all_py_files = set()
+        for py_path in workspace_path.rglob("*.py"):
+            if py_path.is_file() and not py_path.name.startswith("_"):
+                all_py_files.add(py_path.name)
+
+        # Find all run_shell executions from history
         executed_scripts = set()
         for item in self.session["history"]:
             if item.get("role") != "tool":
                 continue
             name = item.get("name", "")
             args = item.get("args", {})
-            if name == "write_file":
-                path = str(args.get("path", ""))
-                if path.endswith(".py"):
-                    written_scripts.add(Path(path).name)
-            elif name == "run_shell":
+            if name == "run_shell":
                 cmd = str(args.get("command", ""))
                 # Extract script name from commands like "python script.py" or "python3 script.py"
                 for prefix in ["python ", "python3 ", "python2 "]:
@@ -793,12 +795,13 @@ class MiniAgent:
                             token = part.strip().split()[0] if part.strip() else ""
                             if token.endswith(".py"):
                                 executed_scripts.add(Path(token).name)
+
         # Find unexecuted scripts that still exist in the workspace
-        for script_name in written_scripts:
+        for script_name in all_py_files:
             if script_name not in executed_scripts:
-                script_path = Path(self.workspace.cwd) / script_name
+                script_path = workspace_path / script_name
                 if script_path.exists():
-                    return str(script_path.relative_to(self.workspace.cwd))
+                    return str(script_path.relative_to(workspace_path))
         return None
 
     # ---- compaction helpers --------------------------------------------
