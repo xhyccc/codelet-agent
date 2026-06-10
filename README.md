@@ -30,7 +30,7 @@ A minimal standalone coding agent aligned with OpenAI Codex UX. Runs in your ter
 ```bash
 git clone https://github.com/xhyccc/codelet-agent.git
 cd codelet-agent
-pip install -e .[openai,yaml]   # or just `pip install -e .` for Ollama only
+pip install -e ".[openai,yaml]"   # or just `pip install -e .` for Ollama only
 ```
 
 ### Run
