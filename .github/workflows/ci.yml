@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 
 jobs:
   test:
@@ -17,9 +19,21 @@ jobs:
           - windows-latest
         python-version:
           - "3.10"
+          - "3.11"
+          - "3.12"
         installer:
           - pip
           - uv
+        exclude:
+          # Reduce CI matrix size: uv only on ubuntu + latest Python
+          - os: macos-latest
+            installer: uv
+          - os: windows-latest
+            installer: uv
+          - python-version: "3.10"
+            installer: uv
+          - python-version: "3.11"
+            installer: uv
 
     steps:
       - name: Check out repository
@@ -34,7 +48,7 @@ jobs:
         if: matrix.installer == 'pip'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . pytest ruff
+          python -m pip install -e ".[openai,yaml]" pytest ruff
 
       - name: Install uv and sync environment
         if: matrix.installer == 'uv'
@@ -42,6 +56,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install uv
           uv sync --group dev
+
+      - name: Verify CLI entry point
+        if: matrix.installer == 'pip'
+        run: |
+          codelet --help
+          python -m codelet --help
 
       - name: Lint with pip
         if: matrix.installer == 'pip'
@@ -58,3 +78,31 @@ jobs:
       - name: Run tests with uv
         if: matrix.installer == 'uv'
         run: uv run python -m pytest -q
+
+  test-protocols:
+    name: Protocol tests / Python 3.12 / pip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[openai,yaml,protocols]" pytest
+      - run: python -m pytest tests/test_phase4_protocols.py -q
+
+  test-gdpval-smoke:
+    name: GDPval benchmark smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[openai,yaml]" pandas pyarrow
+      - run: |
+          python -c "import run_gdpval_batch; print('GDPval batch runner importable')"
+          python -c "from codelet.agent import MiniAgent; print('MiniAgent importable')"
