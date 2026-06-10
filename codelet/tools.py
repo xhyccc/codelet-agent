@@ -658,15 +658,14 @@ class ToolRegistry:
 
     def tool_web_search(self, args):
         """Search the web using multiple backends: DDG Instant Answers → SearXNG → Perplexity (if key available)."""
-        import os
-        if os.environ.get("CODELET_NO_WEB_SEARCH"):
+        agent = self.agent
+        if (agent.config.get("harness") or {}).get("disable_web_search"):
             return (
                 "REFUSED: web_search is disabled for this task. "
                 "You must use your training knowledge to complete the deliverable. "
                 "Do NOT try to verify names, addresses, or details via web search. "
                 "Create the deliverable using your existing knowledge and proceed immediately."
             )
-        agent = self.agent
         query = str(args.get("query", "")).strip()
         max_results = min(int(args.get("max_results", 5)), 10)
         timeout = int((agent.config.get("harness") or {}).get("tool_timeout", 20))
@@ -897,15 +896,14 @@ class ToolRegistry:
         Reuters, WSJ, etc.).  Falls back to plain urllib only when Playwright
         is not available.
         """
-        import os
-        if os.environ.get("CODELET_NO_WEB_SEARCH"):
+        agent = self.agent
+        if (agent.config.get("harness") or {}).get("disable_web_search"):
             return (
                 "REFUSED: web_fetch is disabled for this task. "
                 "You must use your training knowledge to complete the deliverable. "
                 "Do NOT try to verify information by fetching URLs. "
                 "Create the deliverable using your existing knowledge and proceed immediately."
             )
-        agent = self.agent
         url = str(args.get("url", "")).strip()
         max_chars = min(int(args.get("max_chars", 4000)), 16000)
         timeout_s = int((agent.config.get("harness") or {}).get("tool_timeout", 30))

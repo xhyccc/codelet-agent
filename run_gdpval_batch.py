@@ -122,7 +122,16 @@ def run_codelet(workspace: Path, prompt: str, max_steps: int = DEFAULT_MAX_STEPS
     """
     env = os.environ.copy()
     env["CODEXLET_CWD"] = str(workspace)
-    env["CODELET_NO_WEB_SEARCH"] = "1"  # Disable web search for GDPval deliverable creation
+
+    # Write a temporary config to disable web_search for GDPval tasks.
+    # This is auto-discovered by codelet as .codelet/config.yaml.
+    codelet_dir = workspace / ".codelet"
+    codelet_dir.mkdir(exist_ok=True)
+    config_yaml = codelet_dir / "config.yaml"
+    config_yaml.write_text(
+        "harness:\n  disable_web_search: true\n",
+        encoding="utf-8",
+    )
 
     cmd = [
         sys.executable, "-m", "codelet",

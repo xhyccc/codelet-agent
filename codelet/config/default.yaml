@@ -197,6 +197,10 @@ harness:
   # produce no new information (dedup stubs, repeated-call errors, duplicate
   # read results). 0 disables the check.
   no_progress_limit: 10
+  # Disable web_search and web_fetch tools entirely. When true, both tools
+  # return a refusal message instead of making network requests. Useful for
+  # benchmark environments or when network access is not desired.
+  disable_web_search: false
   # Graduated compaction cascade. See codelet.compaction for
   # full semantics. Stages run in order until the rendered transcript drops
   # below ``target_chars``: budget_reduction -> snipping -> microcompaction

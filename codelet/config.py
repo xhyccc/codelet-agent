@@ -150,6 +150,8 @@ BUILTIN_DEFAULTS = {
         # produce no new information (dedup stubs, repeated-call errors,
         # duplicate read results). 0 disables the check.
         "no_progress_limit": 3,
+        # Disable web_search and web_fetch tools entirely.
+        "disable_web_search": False,
         # Graduated compaction cascade settings. See
         # :mod:`codelet.compaction` for the full semantics.
         "compaction": {
