@@ -100,3 +100,43 @@ def test_patch_file_renders_diff(tmp_path):
     assert "-y = 2" in result
     assert "+y = 22" in result
     assert target.read_text() == "x = 1\ny = 22\nz = 3\n"
+
+
+# --- disable_web_search tests ---
+
+def _agent_with_config(tmp_path, config):
+    ws = WorkspaceContext.build(str(tmp_path))
+    store = SessionStore(tmp_path / ".codelet" / "sessions")
+    client = FakeModelClient(["<final>noop</final>"])
+    return MiniAgent(
+        model_client=client, workspace=ws, session_store=store,
+        approval_policy="auto", config=config,
+    )
+
+
+def test_web_search_disabled_returns_refusal(tmp_path):
+    agent = _agent_with_config(tmp_path, {"harness": {"disable_web_search": True}})
+    result = agent.run_tool("web_search", {"query": "test", "max_results": 3})
+    assert "REFUSED" in result
+    assert "web_search is disabled" in result
+
+
+def test_web_fetch_disabled_returns_refusal(tmp_path):
+    agent = _agent_with_config(tmp_path, {"harness": {"disable_web_search": True}})
+    result = agent.run_tool("web_fetch", {"url": "https://example.com"})
+    assert "REFUSED" in result
+    assert "web_fetch is disabled" in result
+
+
+def test_web_search_enabled_by_default(tmp_path):
+    agent = _agent(tmp_path)
+    result = agent.run_tool("web_search", {"query": "test", "max_results": 3})
+    # Should NOT be refused — may return "No results found" but not "REFUSED"
+    assert "REFUSED" not in result
+
+
+def test_web_fetch_enabled_by_default(tmp_path):
+    agent = _agent(tmp_path)
+    result = agent.run_tool("web_fetch", {"url": "https://example.com"})
+    # Should NOT be refused — may return fetch result or error, but not "REFUSED"
+    assert "REFUSED" not in result
