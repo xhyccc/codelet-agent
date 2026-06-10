@@ -47,3 +47,31 @@ CLAUDE.local.md
 2026_Nasdaq_IPO_DeepDive.html
 2026_Nasdaq_IPO_DeepDive.md
 compute_pi_hmc.py
+
+# GDPval benchmark artifacts — do not commit
+# (dataset is downloaded at runtime, results are local only)
+gdpval_dataset/
+gdpval_results/
+
+# Batch runner logs
+gdpval_batch*.log
+gdpval_task*.log
+gdpval_tasks_*.log
+
+# One-off generated artifacts
+microsoft_history.pptx
+create_microsoft_history_pptx.py
+_agent_raw.log
+
+# Test / debug scripts
+run_task0_*.py
+run_task0_*.sh
+run_task0_*.log
+start_task0_detached.py
+test_task0_original.py
+test_workspace/
+test_*/
+simple_test/
+
+# GUI prototype (not part of core agent)
+codelet-gui/
