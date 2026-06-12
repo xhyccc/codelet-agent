@@ -154,7 +154,7 @@ BUILTIN_DEFAULTS = {
         "max_tool_output": 4000,
         "max_history": 12000,
         "temperature": 1.0,
-        "top_p": 0.9,
+        "top_p": 0.95,
         "ollama_timeout": 300,
         "openai_timeout": 60,
         "allowed_ops": None,

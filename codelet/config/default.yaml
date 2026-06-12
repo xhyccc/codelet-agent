@@ -174,7 +174,7 @@ harness:
   # Default sampling. These are the values the CLI uses when no --temperature
   # / --top-p flag is given.
   temperature: 1.0
-  top_p: 0.9
+  top_p: 0.95
   # Default request timeouts (seconds).
   ollama_timeout: 300
   openai_timeout: 60

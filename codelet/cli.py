@@ -394,7 +394,7 @@ def _post_process_args(args):
         args.temperature = 1.0
     args._top_p_explicit = hasattr(args, "top_p")
     if not args._top_p_explicit:
-        args.top_p = 0.9
+        args.top_p = 0.95
     args._ollama_timeout_explicit = hasattr(args, "ollama_timeout")
     if not args._ollama_timeout_explicit:
         args.ollama_timeout = 300
