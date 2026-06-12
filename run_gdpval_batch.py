@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -155,16 +156,32 @@ def run_codelet(workspace: Path, prompt: str, max_steps: int = DEFAULT_MAX_STEPS
         text=True,
     )
 
+    def _kill_after_timeout():
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    timer = threading.Timer(DEFAULT_TIMEOUT, _kill_after_timeout)
+    timer.start()
+
     try:
-        stdout, stderr = proc.communicate(timeout=DEFAULT_TIMEOUT)
+        stdout, stderr = proc.communicate()
+        timer.cancel()
         elapsed = time.time() - start
         return proc.returncode, stdout, stderr, elapsed
     except subprocess.TimeoutExpired:
+        timer.cancel()
         proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
         stdout, stderr = proc.communicate()
         elapsed = time.time() - start
         return -1, stdout, stderr, elapsed
     except Exception as exc:
+        timer.cancel()
         proc.kill()
         elapsed = time.time() - start
         return -2, "", str(exc), elapsed
@@ -195,7 +212,7 @@ def collect_deliverables(workspace: Path, task_row, task_idx):
     }
     # Intermediate / non-deliverable extensions
     non_deliverable_extensions = {
-        ".py", ".sh", ".bash", ".json", ".txt", ".md", ".log",
+        ".py", ".sh", ".bash", ".json", ".md", ".log",
         ".yml", ".yaml", ".xml", ".sql", ".js", ".ts", ".css",
     }
 
