@@ -414,6 +414,8 @@ class MiniAgent:
         max_attempts = max(self.max_steps * 3, self.max_steps + 4)
         self._current_tool_step = 0
         self._max_tool_step = self.max_steps
+        # Snapshot existing deliverables so we only detect NEW ones
+        self._preexisting_deliverables = set(self._check_deliverables_created())
 
         def _finish(final_text, reason):
             self.record({"role": "assistant", "content": final_text, "created_at": now()})
@@ -515,6 +517,16 @@ class MiniAgent:
                         }
                     )
                     self.note_tool(name, args, result)
+                # NEW: Early deliverable detection — if NEW deliverable files exist,
+                # force a final answer to prevent wasting steps on rewrites.
+                _deliverables = self._check_deliverables_created()
+                _new_deliverables = [d for d in _deliverables if d not in getattr(self, "_preexisting_deliverables", set())]
+                if _new_deliverables and tool_steps >= 3:
+                    _deliv_msg = (
+                        f"Task completed. Deliverable file(s) created: "
+                        f"{', '.join(_new_deliverables)}"
+                    )
+                    return _finish(_deliv_msg, StopReason.FINAL)
                 # Frustration / repeated-error detector: if the same tool has
                 # failed N times in a row, give up the loop instead of letting
                 # the model spin against an unfixable error.
@@ -803,6 +815,30 @@ class MiniAgent:
                 if script_path.exists():
                     return str(script_path.relative_to(workspace_path))
         return None
+
+    def _check_deliverables_created(self):
+        """Check if any deliverable files have been created in the workspace.
+
+        Returns a list of relative paths of deliverable files found, or empty list.
+        Deliverables are files with known output extensions (xlsx, pdf, docx, etc.)
+        that are not hidden files or intermediate scripts.
+        """
+        deliverable_exts = {
+            ".pdf", ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
+            ".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp",
+            ".wav", ".mp3", ".mp4", ".avi", ".mov", ".mkv",
+            ".csv", ".html", ".zip", ".txt",
+        }
+        workspace_path = Path(self.workspace.cwd)
+        found = []
+        for path in workspace_path.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.name.startswith("_") or path.name.startswith("."):
+                continue
+            if path.suffix.lower() in deliverable_exts:
+                found.append(str(path.relative_to(workspace_path)))
+        return found
 
     # ---- compaction helpers --------------------------------------------
 
