@@ -391,7 +391,7 @@ def _post_process_args(args):
         args.max_new_tokens = 512
     args._temperature_explicit = hasattr(args, "temperature")
     if not args._temperature_explicit:
-        args.temperature = 0.2
+        args.temperature = 1.0
     args._top_p_explicit = hasattr(args, "top_p")
     if not args._top_p_explicit:
         args.top_p = 0.9

@@ -153,7 +153,7 @@ BUILTIN_DEFAULTS = {
         "max_depth": 1,
         "max_tool_output": 4000,
         "max_history": 12000,
-        "temperature": 0.2,
+        "temperature": 1.0,
         "top_p": 0.9,
         "ollama_timeout": 300,
         "openai_timeout": 60,

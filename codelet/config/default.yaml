@@ -173,7 +173,7 @@ harness:
   max_history: 12000
   # Default sampling. These are the values the CLI uses when no --temperature
   # / --top-p flag is given.
-  temperature: 0.2
+  temperature: 1.0
   top_p: 0.9
   # Default request timeouts (seconds).
   ollama_timeout: 300
