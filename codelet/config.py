@@ -169,6 +169,10 @@ BUILTIN_DEFAULTS = {
         "no_progress_limit": 10,
         # Disable web_search and web_fetch tools entirely.
         "disable_web_search": False,
+        # Maximum number of read-only inspection steps before the agent is
+        # forced to use write/create tools. After this limit, read-only tools
+        # are rejected with a message telling the model to start creating.
+        "max_inspection_steps": 8,
         # Graduated compaction cascade settings. See
         # :mod:`codelet.compaction` for the full semantics.
         "compaction": {

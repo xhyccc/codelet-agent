@@ -499,6 +499,46 @@ class MiniAgent:
                 remaining = self.max_steps - tool_steps
                 if remaining > 0 and len(calls) > remaining:
                     calls = calls[:remaining]
+                # NEW: max_inspection_steps enforcement. After the limit,
+                # read-only tools are rejected to force the agent into creation mode.
+                max_inspection_steps = int(harness.get("max_inspection_steps", 8))
+                _read_only_tools = {"glob", "list_files", "read_file", "search", "run_python"}
+                if max_inspection_steps > 0:
+                    # Count read-only tools used in this session
+                    _ro_count = sum(1 for item in self.session["history"] if item.get("role") == "tool" and item.get("name") in _read_only_tools)
+                    if _ro_count >= max_inspection_steps:
+                        # Reject all read-only calls in this batch
+                        _rejected = []
+                        for call in calls:
+                            if call.get("name", "") in _read_only_tools:
+                                _rejected.append(call)
+                        if _rejected:
+                            # Replace rejected calls with a synthetic refusal
+                            _rejection_msg = (
+                                f"INSPECTION LIMIT REACHED ({_ro_count}/{max_inspection_steps}): "
+                                f"You have used all your read-only inspection steps. "
+                                f"STOP inspecting and START creating the deliverable NOW. "
+                                f"Use write_file or run_shell to create the output. "
+                                f"Read-only calls are: {', '.join(c.get('name','') for c in _rejected)}."
+                            )
+                            # Replace the batch with a single synthetic refusal
+                            calls = [{"name": "__inspection_limit", "args": {}}]
+                            batch_results = [("__inspection_limit", {}, _rejection_msg)]
+                            name = "__inspection_limit"
+                            result = _rejection_msg
+                            # Record the synthetic refusal
+                            self.record({
+                                "role": "tool",
+                                "name": "__inspection_limit",
+                                "args": {},
+                                "content": _rejection_msg,
+                                "created_at": now(),
+                            })
+                            self.note_tool("__inspection_limit", {}, _rejection_msg)
+                            tool_steps += 1
+                            self._current_tool_step = tool_steps
+                            continue
+                
                 batch_results = self._execute_tool_batch(calls)
                 name = ""
                 result = ""

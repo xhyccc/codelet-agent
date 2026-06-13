@@ -201,6 +201,9 @@ harness:
   # return a refusal message instead of making network requests. Useful for
   # benchmark environments or when network access is not desired.
   disable_web_search: false
+  # Maximum number of read-only inspection steps before the agent is forced
+  # to use write/create tools. After this limit, read-only tools are rejected.
+  max_inspection_steps: 8
   # Graduated compaction cascade. See codelet.compaction for
   # full semantics. Stages run in order until the rendered transcript drops
   # below ``target_chars``: budget_reduction -> snipping -> microcompaction
