@@ -338,6 +338,27 @@ class MiniAgent:
                 step_info += " CRITICAL: You are running out of steps. Issue your final answer or create the deliverable NOW."
             if current_step >= 3 and remaining > 2:
                 step_info += " WARNING: You have spent too many steps on exploration. If you have not started creating, do so immediately with write_file then run_shell. Do NOT write intermediate scripts or make more inspection calls."
+
+            # NEW: If the agent just wrote a .py script but never ran it, remind them to execute it
+            _last_tool = None
+            for item in reversed(self.session["history"]):
+                if item.get("role") == "tool":
+                    _last_tool = item
+                    break
+            if _last_tool and _last_tool.get("name") == "write_file":
+                _path = _last_tool.get("args", {}).get("path", "")
+                if _path.endswith(".py"):
+                    _script_name = Path(_path).name
+                    _executed = False
+                    for item in self.session["history"]:
+                        if item.get("role") == "tool" and item.get("name") == "run_shell":
+                            _cmd = item.get("args", {}).get("command", "")
+                            if _script_name in _cmd:
+                                _executed = True
+                                break
+                    if not _executed:
+                        step_info += f" CRITICAL: You just wrote '{_script_name}' but have NOT executed it yet. RUN IT NOW with run_shell before doing anything else."
+
         built = build_prompt(self.prefix, self.memory_text(), self.history_text(), message + step_info)
         # Token budget check
         if self.max_tokens is not None:
