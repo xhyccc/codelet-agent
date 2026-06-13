@@ -435,6 +435,7 @@ class MiniAgent:
         max_attempts = max(self.max_steps * 3, self.max_steps + 4)
         self._current_tool_step = 0
         self._max_tool_step = self.max_steps
+        self._failed_script_count = 0
         # Snapshot existing deliverables so we only detect NEW ones
         self._preexisting_deliverables = set(self._check_deliverables_created())
 
@@ -578,6 +579,28 @@ class MiniAgent:
                         }
                     )
                     self.note_tool(name, args, result)
+                # NEW: Failed script execution counter. After the agent writes a
+                # .py script and it fails (Error/Traceback in output), count it.
+                # After 3 failed script attempts, force a final answer telling the
+                # agent to use a simpler approach.
+                _failed_script_count = getattr(self, "_failed_script_count", 0)
+                for _name, _args, _result in batch_results:
+                    if _name == "run_shell":
+                        _cmd = str(_args.get("command", ""))
+                        if ".py" in _cmd:
+                            _result_str = str(_result)
+                            if "Traceback" in _result_str or "Error" in _result_str or "error" in _result_str.lower():
+                                _failed_script_count += 1
+                                self._failed_script_count = _failed_script_count
+                if _failed_script_count >= 3:
+                    _final = (
+                        f"Stopped after {_failed_script_count} failed script execution attempts. "
+                        f"Your Python script keeps failing. Use a MUCH SIMPLER approach: "
+                        f"write a minimal script with just the essential code, test it with a small subset, "
+                        f"and verify it works before adding more content. "
+                        f"Do NOT write complex multi-page scripts."
+                    )
+                    return _finish(_final, StopReason.REPEATED_ERROR_GIVEUP)
                 # NEW: Early deliverable detection — if NEW deliverable files exist,
                 # force a final answer to prevent wasting steps on rewrites.
                 _deliverables = self._check_deliverables_created()

@@ -288,7 +288,9 @@ def run_single_task(df, task_idx, progress, max_steps):
         f"Extract just enough to understand the structure and format - do NOT perform deep analysis.\n"
         f"5. Create the deliverable immediately after reading - do NOT perform exploratory analysis\n"
         f"6. Save all output files in the current workspace directory using write_file or run_python\n"
-        f"7. Issue <final> as soon as the deliverable file is created"
+        f"7. Pre-installed libraries: pandas, openpyxl, python-docx, pdfplumber, fpdf2 (import: from fpdf import FPDF), reportlab, python-pptx. "
+        f"Do NOT try to install packages - they are already available. Use simple, tested syntax.\n"
+        f"8. Issue <final> as soon as the deliverable file is created"
     )
 
     # Add note about missing reference files
