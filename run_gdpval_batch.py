@@ -93,11 +93,17 @@ def setup_task_workspace(task_row, task_idx):
             shutil.rmtree(item)
 
     # Copy reference files into workspace
+    missing_refs = []
     for ref_path in ref_files:
         src = DATASET_DIR / ref_path
         if src.exists():
             dst = workspace / Path(ref_path).name
             shutil.copy2(src, dst)
+        else:
+            missing_refs.append(Path(ref_path).name)
+
+    if missing_refs:
+        print(f"  [WARN] Missing reference files for task {task_id}: {missing_refs}")
 
     # Write task metadata for debugging
     meta = {
@@ -112,7 +118,7 @@ def setup_task_workspace(task_row, task_idx):
     with open(workspace / "_task_meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
-    return workspace
+    return workspace, missing_refs
 
 
 def run_codelet(workspace: Path, prompt: str, max_steps: int = DEFAULT_MAX_STEPS):
@@ -255,7 +261,7 @@ def run_single_task(df, task_idx, progress, max_steps):
         return progress
 
     # Setup workspace
-    workspace = setup_task_workspace(task_row, task_idx)
+    workspace, missing_refs = setup_task_workspace(task_row, task_idx)
     print(f"  Workspace: {workspace}")
 
     # Build prompt - make it more direct and prescriptive
@@ -284,6 +290,13 @@ def run_single_task(df, task_idx, progress, max_steps):
         f"6. Save all output files in the current workspace directory using write_file or run_python\n"
         f"7. Issue <final> as soon as the deliverable file is created"
     )
+
+    # Add note about missing reference files
+    if missing_refs:
+        prompt += (
+            f"\n\nNOTE: The following reference files were NOT available in the dataset: {missing_refs}. "
+            f"Do NOT search for them or try to find them. Use the data already provided in the task description above."
+        )
 
     # Run agent
     print(f"  Running codelet (max_steps={max_steps}, timeout={DEFAULT_TIMEOUT}s)...")
